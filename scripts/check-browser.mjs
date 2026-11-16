@@ -25,7 +25,7 @@ const ALL_APPS_COUNT = SOURCE_NAMES.length + 12;
 const artFixture = readFileSync(root + 'scripts/fixtures/art-test.jpg');
 const out = root + '.local/qa/';
 mkdirSync(out, { recursive: true });
-const sourceFiles = ['app/main.js', 'app/art-mode.js', 'app/device.js', 'app/index.html', 'app/style.css', 'app/config.xml', 'app/assets/icons/metrics.js'];
+const sourceFiles = ['app/main.js', 'app/art-mode.js', 'app/camera-layout.js', 'app/device.js', 'app/index.html', 'app/style.css', 'app/config.xml', 'app/assets/icons/metrics.js'];
 const hashes = () => Object.fromEntries(sourceFiles.map(f => [f, createHash('sha256').update(readFileSync(root + f)).digest('hex')]));
 const report = { scope: 'Production UI in Chromium; mock public Tizen API only; no TV contacted.', sourceBefore: hashes(), checks: [], failures: [], pageErrors: [], expectedNetworkFailures: [] };
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
@@ -941,6 +941,23 @@ try {
     await nav('back'); await current.waitForTimeout(150);
     check('Tiles whose snapshots the TV player cut off stream again after it', await current.evaluate(() => !document.documentElement.classList.contains('is-avplay') && document.querySelectorAll('.cam .cam-live[src]').length === 3));
     await nav('back');
+  });
+  await run('Scrolled On Home column in the editor', async () => {
+    const home = ['livetv', 'youtube', 'netflix', 'espn', 'primevideo', 'browser', 'hdmi1', 'hdmi2', 'hdmi3', 'hdmi4', 'stremio', 'disneyplus', 'appletv', 'abciview', 'sbs'];
+    await page({ seed: { home, recent: ['applemusic'], look: { layout: 'dock', inputs: 'always' } } });
+    await current.evaluate(() => ShoreQA.scene('editor')); await current.waitForTimeout(200);
+    await nav(...Array(14).fill('down')); await nav('right', 'right'); await current.waitForTimeout(100);
+    const other = await current.evaluate(() => { const e = document.querySelector('.eo.is-focus'); if (!e) throw Error('No Not on Home focus: ' + ShoreQA.where().focusAction + ' / ' + ShoreQA.state().dock.length); return e.getBoundingClientRect().top; });
+    await nav('left'); await current.waitForTimeout(100);
+    const landed = await current.evaluate(() => document.querySelector('.er.is-active').getBoundingClientRect().top);
+    check('Left from Not on Home lands on the On Home row level with it after the column scrolled', Math.abs(landed - other) < 40, { other, landed });
+    await closePage();
+    await page({ seed: { home, look: { layout: 'dock', inputs: 'always' } } });
+    await current.evaluate(() => ShoreQA.scene('editor')); await current.waitForTimeout(200);
+    await nav('ok', ...Array(10).fill('down')); await current.waitForTimeout(400);
+    const origin = await current.evaluate(() => { const o = document.querySelector('.ed-origin'), col = document.querySelector('.ed-home').getBoundingClientRect(); return { on: o.classList.contains('is-on'), top: o.getBoundingClientRect().top, column: col.top }; });
+    check('A lifted app\'s old place is not drawn once its row has scrolled out of the column', !origin.on || origin.top >= origin.column, origin);
+    await closePage();
   });
   await run('Six cameras', async () => {
     // Snapshots first, then streams, on every tile: with six cameras the streams alone fill the
