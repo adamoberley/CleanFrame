@@ -435,17 +435,21 @@
   }
   /* Lights: the TV-local bridge fires the owner's Vetro rule, which tells Home Assistant over MQTT. */
   var lightsFlash = null, lightsTimer = 0;
+  var lightsBusy = false;
   function pressLights() {
-    var xhr = new window.XMLHttpRequest(), done = false;
+    var xhr, done = false;
+    if (lightsBusy) return; // One press at a time: a second press during a slow one is ignored.
+    lightsBusy = true; xhr = new window.XMLHttpRequest();
     function finish(ok) {
-      if (done) return; done = true;
+      if (done) return; done = true; lightsBusy = false;
+      if (ok === null) return; // Rate-limited by the bridge: nothing new was sent, so nothing to report.
       lightsFlash = ok ? 'TV lights' : 'Lights unavailable'; clearTimeout(lightsTimer);
       lightsTimer = setTimeout(function () { lightsFlash = null; render(); }, 2500); render();
     }
     try {
       xhr.open('POST', window.FrameArt.bridge() + '/lights', true); xhr.timeout = 6000;
       window.FrameArt.authorize(xhr);
-      xhr.onload = function () { finish(xhr.status === 204 || xhr.status === 429); }; // 429: the press just before already went through.
+      xhr.onload = function () { finish(xhr.status === 429 ? null : xhr.status === 204); };
       xhr.onerror = xhr.ontimeout = function () { finish(false); };
       xhr.send('');
     } catch (e) { finish(false); }
@@ -625,12 +629,12 @@
         else if (k === 'back') { f.i = t.lifted.from; t.lifted = null; S.err = null; }
         return;
       }
-      if (k === 'back') { closeEditor(t); return; }
+      if (k === 'back') { closeEditor(); return; }
       if (f.zone === 'head') {
         if (k === 'left' && f.h > 0) f.h--;
         else if (k === 'right' && f.h < 1) f.h++;
         else if (k === 'down') { if (no) returnOther(t); else if (nh) f.zone = 'home'; }
-        else if (k === 'ok') { begin(); if (f.h === 0) undoLast(); else closeEditor(t); }
+        else if (k === 'ok') { begin(); if (f.h === 0) undoLast(); else closeEditor(); }
       } else if (f.zone === 'home') {
         if (k === 'up') { if (f.i > 0) f.i--; else f.zone = 'head'; }
         else if (k === 'down') { if (f.i < nh - 1) f.i++; }
@@ -739,11 +743,11 @@
     if (column !== undefined) t.f.column = column;
     if (item.axis) S.appearanceFocus = item.axis;
   }
-  function detailBack() { cancelLook(); S.err = null; pop(); FrameDevice.cancelSource(); }
+  function detailBack() { if (S.pending && S.pending.background) artInstallCancelled = true; cancelLook(); S.err = null; pop(); FrameDevice.cancelSource(); }
   function detailOk(t, item) {
     var patch = {}, error = S.lookError;
     if (item.action === 'settings.back') { detailBack(); return; }
-    if (S.pending && S.pending.background) cancelLook(); // The photo refresh retries on the next return Home.
+    if (S.pending && S.pending.background) { cancelLook(); artInstallCancelled = true; } // refreshArt installs it on the next return Home.
     if (S.pending) return;
     if (item.action === 'settings.retry') {
       if (error && error.patch[error.row] !== undefined) detailFocus(t, choice(error.row, error.patch[error.row]), 0);
@@ -932,8 +936,8 @@
       list.forEach(function (item, k) { orders(list.slice(0, k).concat(list.slice(k + 1))).forEach(function (o) { out.push([item].concat(o)); }); });
       return out;
     }
-    var items = ratios.map(function (r, i) { return { i: i, r: r }; }), seen = {}, all = (items.length <= 5 ? orders(items) : items.map(function (hero) {
-      // Six cameras: each one may lead, the rest keep their order (720 full orders is too slow on a TV).
+    var items = ratios.map(function (r, i) { return { i: i, r: r }; }), seen = {}, all = (items.length <= 4 ? orders(items) : items.map(function (hero) {
+      // Five or six cameras: each one may lead, the rest keep their order (every order is too slow on a TV).
       return [hero].concat(items.filter(function (x) { return x !== hero; }));
     })).filter(function (o) {
       // Cameras with the same shape are interchangeable: try each distinct shape sequence once.
@@ -1345,7 +1349,7 @@
     }).join(''));
     if (S.pending && !S.pending.background) status = '<p>Loading your choice…</p><p>Back cancels this change.</p>';
     else if (error) {
-      status = '<p class="setting-error">' + (error.type === 'save' ? 'Couldn’t save this change.' : error.patch.bg === 'photo' ? 'Art Mode is unavailable. Start the local Art bridge, then try again.' : 'Couldn’t load this appearance.') + ' Your current choice is kept.</p>'
+      status = '<p class="setting-error">' + (error.type === 'save' ? 'Couldn’t save this change.' : 'Couldn’t load this appearance.') + ' Your current choice is kept.</p>'
         + command({ action: 'settings.retry', label: 'Try again' }, '<span>Try again</span>', 'setting-retry');
     }
     setHTML(appearanceStatus, status);
@@ -1699,8 +1703,12 @@
     else setLook({}, { transient: true });
   }
 
+  var artInstallCancelled = false;
   function refreshArt() {
-    if (document.hidden || top().id !== 'home' || S.pending || Date.now() - artRefreshAt < 5000) return;
+    if (document.hidden || top().id !== 'home' || S.pending) return;
+    // A known newer photo whose background install was cancelled (Back in Visual) is installed now.
+    if (artInstallCancelled) { artInstallCancelled = false; setLook({}, { transient: true }); return; }
+    if (Date.now() - artRefreshAt < 5000) return;
     artRefreshAt = Date.now();
     var token = lookToken;
     window.FrameArt.refresh(function (fresh) {

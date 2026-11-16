@@ -1,4 +1,4 @@
-/* Optional TV-local Art bridge. No credentials, polling, pixel reads or remote-key I/O. */
+/* Optional TV-local Art bridge client. Sends only the bridge's own per-install key; no polling, pixel reads or remote-key I/O. */
 (function () {
   'use strict';
   var MAX = 12 * 1024 * 1024, PORT_KEY = 'cleanframe.art.port', META_KEY = 'cleanframe.art.cache.v1', LOOK_KEY = 'cleanframe.art.look.v1';
@@ -22,7 +22,8 @@
   function authorize(xhr) {
     var k = null;
     try { k = localStorage.getItem('cleanframe.art.key'); } catch (e) { k = null; }
-    if (k && /^[A-Za-z0-9_-]{24,128}$/.test(k)) xhr.setRequestHeader('X-CleanFrame-Key', k);
+    // Same rule as the bridge: 24-256 printable ASCII characters, no spaces.
+    if (k && /^[\x21-\x7e]{24,256}$/.test(k)) xhr.setRequestHeader('X-CleanFrame-Key', k);
   }
   function port() {
     var p;

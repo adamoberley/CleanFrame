@@ -455,7 +455,7 @@ function moduleFactory(ctx) {
       } catch (e) { socket.destroy(); }
     });
     socket.on('timeout', function () { socket.destroy(); });
-    socket.on('error', function () { pipState.connected = false; });
+    socket.on('error', function () { pipState.connected = false; pipState.lastError = 'MQTT connection failed'; });
     socket.on('close', retry);
   }
   function handler(req, res) {

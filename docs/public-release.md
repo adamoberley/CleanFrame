@@ -12,7 +12,10 @@ Signing keys, account tokens, local device addresses, recovery state and persona
 
 The fifteen wallpaper pages were checked for author and Unsplash licence on 20 October 2026; their provenance remains historical in [asset sources](asset-sources.md). This personal fork no longer ships those photos or their derived materials. ABC and SBS icons use documented MIT Custom Brand Icons sources. The white ESPN PNG derives from the documented public-domain text logo; trademark rights remain with ESPN. Font and icon licence texts are retained. Original code uses MIT; third-party assets keep their own terms in [third-party notices](../THIRD_PARTY_NOTICES.md).
 
-## Validation
+## Validation (upstream 0.7.0, historical)
+
+The results below describe the upstream 0.7.0 public release, before this fork removed bundled fonts and materials. Current checks are listed in the README.
+
 
 A separate clean snapshot contains 193 files, about 17 MB, without private setup. It passed `npm ci`, source/resource checks, public-source and font-hash checks, all 344 Chromium acceptance checks, and an unsigned public-font export. The export contains exactly three public font binaries. `npm audit` reported zero known vulnerabilities. The retained material and icon-metric generators also passed local smoke checks. These results do not establish physical-TV behaviour.
 

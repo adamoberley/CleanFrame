@@ -738,6 +738,22 @@ try {
     await group('layout'); await current.waitForTimeout(250);
     check('Settings Focus preview keeps a half plate on the selected app', /on-sel/.test(await plate()), await plate());
   });
+  await run('Bridge key', async () => {
+    const seen = [];
+    await page({}, async p => {
+      await p.addInitScript(() => localStorage.setItem('cleanframe.art.key', 'k3y+with/base64=chars-0123456789'));
+      p.on('request', r => { if (r.url().startsWith('http://127.0.0.1:8643/')) seen.push(r.headers()['x-cleanframe-key'] || null); });
+    });
+    await current.waitForFunction(() => !FrameArt.status().refreshing); await current.waitForTimeout(200);
+    check('The widget sends a configured bridge key with printable symbols on every bridge request', seen.length > 0 && seen.every(k => k === 'k3y+with/base64=chars-0123456789'), seen);
+    await closePage(); seen.length = 0;
+    await page({}, async p => {
+      await p.addInitScript(() => localStorage.setItem('cleanframe.art.key', 'short'));
+      p.on('request', r => { if (r.url().startsWith('http://127.0.0.1:8643/')) seen.push(r.headers()['x-cleanframe-key'] || null); });
+    });
+    await current.waitForTimeout(300);
+    check('An invalid key is not sent', seen.every(k => k === null), seen);
+  });
   await run('Clock and weather', async () => {
     await page({}, async p => {
       await p.addInitScript(() => localStorage.setItem('cleanframe.weather.v1', JSON.stringify({ lat: 40.4, lon: -82.48, unit: 'f' })));
@@ -780,9 +796,8 @@ try {
     await act('util.lights'); await current.waitForFunction(() => /TV lights/.test(document.getElementById('utils').textContent));
     check('Lights posts once to the bridge and confirms', same(lightPosts, ['POST']));
     await current.waitForFunction(() => !/TV lights/.test(document.getElementById('utils').textContent), null, { timeout: 4000 });
-    lightStatus = 429; await act('util.lights'); await current.waitForFunction(() => /TV lights/.test(document.getElementById('utils').textContent));
-    check('A press the bridge rate-limits still reads as sent', await current.evaluate(() => /TV lights/.test(document.getElementById('utils').textContent)) && lightPosts.length === 2);
-    await current.waitForFunction(() => !/TV lights/.test(document.getElementById('utils').textContent), null, { timeout: 4000 });
+    lightStatus = 429; await act('util.lights'); await current.waitForTimeout(300);
+    check('A press the bridge rate-limits reports nothing (nothing new was sent)', await current.evaluate(() => !/TV lights|Lights unavailable/.test(document.getElementById('utils').textContent)) && lightPosts.length === 2);
     lightStatus = 502; await act('util.lights'); await current.waitForFunction(() => /Lights unavailable/.test(document.getElementById('utils').textContent));
     check('A bridge failure says Lights unavailable', await current.evaluate(() => /Lights unavailable/.test(document.getElementById('utils').textContent)) && lightPosts.length === 3);
     await act('util.cameras'); await current.waitForFunction(() => document.querySelectorAll('.cam .cam-live[src]').length === 3);
