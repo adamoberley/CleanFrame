@@ -210,6 +210,10 @@ function moduleFactory(ctx) {
     var g = generation, tmp = path.join(dir, 'copy-' + process.pid + '-' + (++counter) + '.tmp');
     inflight = readPreference().then(function (meta) {
       active(g);
+      // Same selection as last time: reuse the cached JPEG instead of copying 4K bytes again.
+      // Each upload gets a new content ID, so an unchanged ID and size means an unchanged image.
+      if (current && current.contentId === meta.contentId && current.width === meta.width && current.height === meta.height &&
+          fs.existsSync(path.join(dir, current.revision + '.jpg'))) { lastRead = Date.now(); lastError = false; return current; }
       var source = imagePath(meta.contentId, PHOTO + meta.contentId + '.jpg');
       // No JPEG bytes cross execute stdout. Noclobber, canonical source, bounded copy,
       // private permissions and numeric ownership precede the unprivileged atomic rename.

@@ -34,7 +34,7 @@
   var PRIMARY = PRIMARY_APPS.map(function (a) { return a.id; }), APPS = PRIMARY_APPS.slice(), ALPHA = [];
   var KEY = 'cleanframe.home.v1', storageOk = true, catalog = { loading: false, loaded: false, error: null, request: 0, revision: 0 };
   var QA = window.ShoreQA = {};
-  /* Inter is the only typeface. Width measurements are cached once it has loaded. */
+  /* One system typeface (FONT_STACK). Width measurements are cached. */
   var fontState = null, fontsReady = false, widthCache = {}, fontRevision = 0;
   var LOOK_VALUES = { source: ['art'], bg: ['photo'], layout: ['list', 'dock'], apps: ['icons', 'both', 'text'], controls: ['icons', 'both', 'text'], focus: ['type', 'glass'], inputs: ['connected', 'always'], clock: ['off', 'time', 'weather'] };
   var VALUE_NAMES = { list: 'List', dock: 'Dock', type: 'Text', glass: 'Glass', icons: 'Icons', both: 'Icons and text', text: 'Text', connected: 'When connected', always: 'Always', off: 'Off', time: 'Clock', weather: 'With weather' };
@@ -173,47 +173,16 @@
   }
   function smallMark(a) { return appMark(a, 56, 44, 36); }
   var measureContext = document.createElement('canvas').getContext('2d');
-  function loadInter(done) {
-    var timer, ended = false;
-    if (!document.fonts || !document.fonts.load) { done(true); return; }
-    function finish(ok) { if (ended) return; ended = true; clearTimeout(timer); done(ok); }
-    timer = setTimeout(function () { finish(false); }, 3000);
-    document.fonts.load('500 88px "Inter"').then(function (faces) {
-      finish(faces.length > 0 && faces.every(function (face) { return face.status === 'loaded'; }));
-    }, function () { finish(false); });
-  }
-  function interLoaded() {
-    fontState = 'loaded'; fontsReady = true;
-    // Measurements and cached markup made with the fallback face are stale.
-    widthCache = {}; fontRevision++;
-  }
-  var baselineRecovery = false;
-  function ensureFont(done) {
-    if (fontState) { done(); return; }
-    loadInter(function (ok) {
-      if (ok) { interLoaded(); done(); return; }
-      // The local fallback keeps Home usable if Inter is slow or missing.
-      fontState = 'fallback'; fontsReady = true;
-      done();
-      if (!baselineRecovery && document.fonts && document.fonts.ready) {
-        baselineRecovery = true;
-        document.fonts.ready.then(function () {
-          fontState = null;
-          loadInter(function (loaded) {
-            if (loaded) interLoaded(); else fontState = 'fallback';
-            render();
-          });
-        });
-      }
-    });
-  }
+  /* The TV's own One UI Sans (as in Tizen's menus): nothing to download, so text is ready at
+     once. Other platforms fall back to a standard sans-serif. */
+  var FONT_STACK = '"One UI Sans APP", SamsungOneUI, "Samsung Sans", Roboto, "Helvetica Neue", Arial, sans-serif';
+  function ensureFont(done) { fontState = 'loaded'; fontsReady = true; done(); }
   function textWidth(text, size, weight, spacing) {
     var key = [text, size, weight, spacing].join('|'), width;
     if (widthCache.hasOwnProperty(key)) return widthCache[key];
-    measureContext.font = (weight || 500) + ' ' + size + 'px "Inter", Arial, sans-serif';
+    measureContext.font = (weight || 500) + ' ' + size + 'px ' + FONT_STACK;
     width = measureContext.measureText(text).width + Math.max(0, text.length - 1) * (spacing || 0);
-    // Do not retain fallback measurements made before Inter is ready.
-    if (fontState === 'loaded') widthCache[key] = width;
+    widthCache[key] = width;
     return width;
   }
   function dockLabelSize(id) { return S.c.apps === 'text' ? (textWidth(app(id).name, 40, 600, -.8) > 264 ? 34 : 40) : textWidth(app(id).name, 36, 500, -.8) > 280 ? 32 : 36; }

@@ -109,6 +109,17 @@ test('MQTT packets are framed, bounded and parsed for the doorbell topic', () =>
   const big = shard.mqttPacket(0x30, Buffer.alloc(200)); assert.equal(big[1], 0xC8); assert.equal(big[2], 1);
   assert.throws(() => shard.mqttPackets(Buffer.from([0x30, 0xff, 0xff, 0xff, 0x7f])));
 });
+test('an unchanged Art selection reuses the cached JPEG without another copy', async () => {
+  await harness(async ({ port, calls }) => {
+    const first = JSON.parse((await get(port)).body);
+    const copies = () => calls.filter(c => c.startsWith('set -e;')).length;
+    assert.equal(copies(), 1);
+    await new Promise(r => setTimeout(r, 1600));
+    const again = JSON.parse((await get(port)).body);
+    assert.equal(again.revision, first.revision); assert.equal(copies(), 1);
+    assert.equal((await get(port, again.imageUrl)).status, 200);
+  });
+});
 test('uploaded ID/path allowlist rejects injection, aliases and traversal', () => {
   for (const id of ['../MY_A', 'MY_..', 'MY_A\n', 'MY_a;id', 'MY_a$(id)', "MY_a'b", 'STORE_A', 'MY_' + 'a'.repeat(65)]) assert.throws(() => shard.imagePath(id, PHOTO + id + '.jpg'));
   for (const suffix of ['.JPG', '.jpeg', '.jpg/../a', '.jpg?x', '.jpg\0']) assert.throws(() => shard.imagePath('MY_A', PHOTO + 'MY_A' + suffix));

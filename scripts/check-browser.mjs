@@ -265,25 +265,6 @@ try {
     await page({ storageFailure: true });
     check('Failed startup write keeps the saved preferences and a usable Home', !(await state()).storageOk && same(await stored(), baseline()) && (await call('where')).focusCount === 1);
   });
-  await run('Font recovery invalidates fallback measurements', async () => {
-    const seed = baseline({ dock: ['sbs', 'netflix'], lastApp: 'sbs', look: { layout: 'list', apps: 'both', controls: 'both', focus: 'glass' } });
-    const geometry = () => current.evaluate(() => ({
-      plate: document.querySelector('#phScene > .ph-plate.is-current').style.width,
-      names: [...document.querySelectorAll('.ph-name')].map(e => ({ text: e.textContent, size: e.style.fontSize, top: e.style.top }))
-    }));
-    await page({ seed });
-    const expected = await geometry();
-    await closePage();
-    let releaseFont, requests = 0;
-    const fontGate = new Promise(resolve => { releaseFont = resolve; });
-    await page({ seed, settleNetwork: false }, p => p.route('**/assets/inter.woff2', async route => {
-      requests++; await fontGate; await route.continue();
-    }));
-    check('Slow baseline font keeps Home usable', (await state()).fonts.baselineFallback && (await call('where')).focusCount === 1 && requests > 0);
-    releaseFont();
-    await current.waitForFunction(() => !ShoreQA.state().fonts.baselineFallback && ShoreQA.state().fonts.loaded);
-    check('Recovered font restores normal label and focus geometry', same(await geometry(), expected), { expected, actual: await geometry() });
-  });
   await run('Hidden boot installs a complete wallpaper without animation frames', async () => {
     await page({ initiallyHidden: true, pauseHiddenFrames: true, rejectDecode: true });
     const before = await stored();
@@ -553,10 +534,11 @@ try {
     await current.waitForFunction(() => !ShoreQA.state().pending);
     check('Failed appearance write keeps display and preferences', (await state()).look.layout === old.look.layout && (await state()).look.inputs === old.look.inputs && same((await settingsSnapshot()).rendered, oldClasses) && same(await stored(), oldStored));
   });
-  await run('Retired appearance values, Inter and scaling', async () => {
+  await run('Retired appearance values, system font and scaling', async () => {
     await page();
     await look({ layout: 'dock', focus: 'glass', apps: 'both', controls: 'icons' });
-    check('Home names use Inter', await current.evaluate(() => /^"?Inter"?,/.test(getComputedStyle(document.querySelector('.tile .label')).fontFamily)));
+    check('Home names use the TV system font (One UI Sans)', await current.evaluate(() => /^"?One UI Sans APP"?,/.test(getComputedStyle(document.querySelector('.tile .label')).fontFamily)));
+    check('No font files are requested', await current.evaluate(() => !performance.getEntriesByType('resource').some(r => /\.(woff2?|ttf|otf)(\?|$)/.test(r.name))));
     for (const patch of [{ bg: 'dark' }, { bg: 'light' }, { font: 'newsreader' }, { material: 'tint' }, { wall: 'misty' }]) {
       const message = 'Invalid appearance value: ' + Object.keys(patch)[0];
       const writes = (await state()).writes;

@@ -272,8 +272,7 @@ with zipfile.ZipFile(target, 'a') as archive:
             self.assertEqual(manifest_identity(archive.read('config.xml')), identity)
 
     def test_public_check_reads_index_and_history(self):
-        for name in ['scripts/check-public.py', 'scripts/widget.py', 'scripts/local_config.py', 'scripts/private_files.py',
-                     'app/assets/inter.woff2', 'app/assets/inter-OFL.txt']:
+        for name in ['scripts/check-public.py', 'scripts/widget.py', 'scripts/local_config.py', 'scripts/private_files.py']:
             target = self.root / name
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes((ROOT / name).read_bytes())
