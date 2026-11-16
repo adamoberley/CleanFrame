@@ -8,7 +8,7 @@
   var DOCK_MODES = { both: { tw: 288, th: 200, pitch: 296 }, text: { tw: 288, th: 104, pitch: 296 }, icons: { tw: 176, th: 144, pitch: 184 } };
   var GRID_ROW = 240, GRID_COL = 344, COLS = 5;
   var ED_ROW = 80, ED_SEP = 56, ED_VIEW = 752;
-  var PH_LEFT = 80, PH_TOP = 136, PH_LIST_TOP = 40, PH_PITCH = 128, PH_FULL = 7, PH_HEIGHT = 1040, PH_COMPACT_HEIGHT = 944, PH_COMPACT_TOP = 144, PH_COMPACT_PITCH = 88, PH_COMPACT_VISIBLE = 9;
+  var PH_LEFT = 80, PH_TOP = 136, PH_LIST_TOP = 40, PH_PITCH = 128, PH_FULL = 7, PH_HEIGHT = 1040, PH_COMPACT_HEIGHT = 944, PH_COMPACT_TOP = 144, PH_COMPACT_PITCH = 88, PH_COMPACT_VISIBLE = 9, PH_PLATE_H = 106;
   var KEYS = { 37: 'left', 38: 'up', 39: 'right', 40: 'down', 13: 'ok', 27: 'back', 8: 'back', 10009: 'back', 461: 'back' };
   var FULL = 'Home holds nine apps. Remove one first.', LAST = 'Home needs one app';
 
@@ -293,6 +293,7 @@
   function listPlateWidth(id, compact) {
     if (S.c.apps === 'icons') return compact ? 120 : 144;
     var text = S.c.apps === 'text';
+    if (!compact && S.c.focus === 'glass') return clamp(Math.ceil(28 + (photoLabel(id, compact).width + (text ? 28 : 100)) * 1.06 + 30), text ? 240 : 300, text ? 1076 : 1176);
     return clamp(Math.ceil(photoLabel(id, compact).width + (text ? 84 : compact ? 156 : 184)), text ? 280 : 360, text ? compact ? 724 : 1076 : compact ? 796 : 1176);
   }
 
@@ -1223,8 +1224,9 @@
     });
     phRows.style.transform = 'translate3d(0,' + (-off) + 'px,0)';
     y = (compact ? PH_COMPACT_TOP + 2 : PH_TOP + 1) + slot * pitch;
-    plateState = !n || hs.zone === null ? '' : hs.lifted ? 'on-lift' : S.c.focus === 'glass' && rowFocus ? 'on-focus' : S.c.focus === 'glass' && remembered ? 'on-sel' : '';
-    renderPhotoPlate(items[anchor] ? items[anchor].id : '', width, compact ? 88 : 134, y, plateState);
+    // One focus at a time: the list keeps its position but shows no plate while Apps/Settings has focus.
+    plateState = !n || hs.zone === null ? '' : hs.lifted ? 'on-lift' : S.c.focus === 'glass' && rowFocus ? 'on-focus' : '';
+    renderPhotoPlate(items[anchor] ? items[anchor].id : '', width, compact ? 88 : PH_PLATE_H, compact ? y : y + (PH_PITCH - PH_PLATE_H) / 2 - 1, plateState);
     if (compact && !hs.lifted && (hs.zone === 'tiles' || hs.zone === 'act') && items[anchor]) {
       s = hs.arr.slots[anchor]; label = (s.removed ? 'Restore ' : 'Remove ') + app(s.id).name; aw = actionWidth(label);
       setHTML(phAction, '<span>' + esc(label) + '</span>');

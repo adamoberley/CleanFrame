@@ -319,6 +319,8 @@ try {
         const focused = [];
         for (let i = 0; i < 2; i++) {
           if (i) await nav(layout === 'dock' ? 'right' : 'down');
+          // The lens springs in from 94%; measure its settled geometry.
+          await current.waitForFunction(() => document.getAnimations().every(a => a.playState !== 'running'));
           focused.push(await current.evaluate(() => {
             const button = document.querySelector('#utils .u.is-focus'), lens = document.querySelector('.ut-lens.is-current');
             if (!button || !lens || ShoreQA.where().focusCount !== 1) return false;
