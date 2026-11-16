@@ -751,6 +751,14 @@ try {
     check('With weather shows the temperature and an icon beside the clock', await current.evaluate(() => /54°/.test(document.querySelector('#caption .weather').textContent) && !!document.querySelector('#caption .weather svg')));
     await look({ clock: 'off' });
     check('Clock Off hides the clock and weather', await current.evaluate(() => !document.querySelector('#caption .clock')));
+    await closePage();
+    await page({}, async p => {
+      await p.addInitScript(() => { localStorage.setItem('cleanframe.weather.v1', JSON.stringify({ lat: 40.4, lon: -82.48, unit: 'f' })); localStorage.setItem('cleanframe.weather.last', JSON.stringify({ temp: 71, kind: 'clear', day: true, at: Date.now() - 5 * 3600000 })); });
+      p.__expectedFailures.push('api.open-meteo.com');
+      await p.route('https://api.open-meteo.com/**', r => r.fulfill({ status: 503, body: 'down' }));
+    });
+    await look({ clock: 'weather' }); await current.waitForTimeout(200);
+    check('A stale reading is not shown when the weather service is down', await current.evaluate(() => !!document.querySelector('#caption .clock') && !document.querySelector('#caption .weather')));
     await closePage(); await page();
     check('Without a location the weather choice is not offered', await current.evaluate(() => { ShoreQA.scene('appearance'); return !document.querySelector('[data-action="choice.clock.weather"]') && !!document.querySelector('[data-action="choice.clock.off"]'); }));
   });
@@ -768,11 +776,18 @@ try {
         await route.fulfill({ contentType: 'image/jpeg', body: Buffer.from(await jpeg(...size), 'base64') });
       });
     });
-    await current.route('http://127.0.0.1:8643/lights', route => { lightPosts.push(route.request().method()); route.fulfill({ status: 204, headers: { 'Access-Control-Allow-Origin': '*' } }); });
+    let lightStatus = 204; current.__expectedFailures.push('8643/lights');
+    await current.route('http://127.0.0.1:8643/lights', route => { lightPosts.push(route.request().method()); route.fulfill({ status: lightStatus, headers: { 'Access-Control-Allow-Origin': '*' } }); });
     check('Configured Home adds Lights and Cameras before Apps and Settings', same(await current.evaluate(() => [...document.querySelectorAll('#utils .u')].map(b => b.getAttribute('aria-label'))), ['Lights', 'Cameras', 'Apps', 'Settings']));
     check('Cameras load nothing until opened', camHits.length === 0);
     await act('util.lights'); await current.waitForFunction(() => /TV lights/.test(document.getElementById('utils').textContent));
     check('Lights posts once to the bridge and confirms', same(lightPosts, ['POST']));
+    await current.waitForFunction(() => !/TV lights/.test(document.getElementById('utils').textContent), null, { timeout: 4000 });
+    lightStatus = 429; await act('util.lights'); await current.waitForFunction(() => /TV lights/.test(document.getElementById('utils').textContent));
+    check('A press the bridge rate-limits still reads as sent', true);
+    await current.waitForFunction(() => !/TV lights/.test(document.getElementById('utils').textContent), null, { timeout: 4000 });
+    lightStatus = 502; await act('util.lights'); await current.waitForFunction(() => /Lights unavailable/.test(document.getElementById('utils').textContent));
+    check('A bridge failure says Lights unavailable', true);
     await act('util.cameras'); await current.waitForFunction(() => document.querySelectorAll('.cam img[src]').length === 3);
     await current.waitForFunction(() => [...document.querySelectorAll('.cam img')].every(i => i.naturalWidth));
     await current.waitForTimeout(100);
@@ -784,6 +799,7 @@ try {
     });
     await nav('ok'); check('OK shows one camera full screen', await current.evaluate(() => document.querySelectorAll('.cam.is-hidden').length === 2));
     await current.waitForFunction(() => document.documentElement.classList.contains('is-avplay'));
+    check('The MJPEG tiles are released while the TV player shows the camera', await current.evaluate(() => document.querySelectorAll('.cam img[src]').length === 0));
     check('Full screen plays the full-quality go2rtc HLS stream with every layer above the video clear', await current.evaluate(() => {
       const clear = el => getComputedStyle(el).backgroundColor === 'rgba(0, 0, 0, 0)';
       return window.__avplay.includes('open http://192.168.1.2:1984/api/stream.m3u8?src=doorbell_hd') && window.__avplay.includes('play') && getComputedStyle(document.getElementById('sheetBg')).visibility === 'hidden'
@@ -791,10 +807,19 @@ try {
     }), await current.evaluate(() => window.__avplay));
     await nav('right');
     check('A camera without a full-quality stream stays on its MJPEG frame', await current.evaluate(() => !document.documentElement.classList.contains('is-avplay') && window.__avplay.filter(l => l.startsWith('open')).length === 1));
+    check('Leaving the player reconnects the MJPEG tiles', await current.evaluate(() => document.querySelectorAll('.cam img[src]').length === 3));
+    await nav('left');
+    await current.evaluate(() => { window.webapis.avplay.prepareAsync = (ok, fail) => setTimeout(() => fail({ name: 'InvalidAccessError' }), 10); });
+    await nav('back'); await nav('ok'); await current.waitForTimeout(150);
+    check('A stream the TV cannot play keeps the MJPEG frame and clears the player', await current.evaluate(() => !document.documentElement.classList.contains('is-avplay') && document.querySelectorAll('.cam img[src]').length === 3 && window.__avplay.includes('close')));
     await nav('back');
     check('Back stops full-quality playback', await current.evaluate(() => !document.documentElement.classList.contains('is-avplay') && window.__avplay.includes('close')));
     await nav('back');
     check('Leaving Cameras stops every stream', (await call('where')).view === 'home' && await current.evaluate(() => document.querySelectorAll('.cam img[src]').length === 0));
+    await act('util.cameras'); await current.waitForFunction(() => document.querySelectorAll('.cam img[src]').length === 3);
+    await current.evaluate(() => window.__setHidden(true)); await current.waitForTimeout(100);
+    check('Hiding CleanFrame closes Cameras and every stream', (await call('where')).view === 'home' && await current.evaluate(() => document.querySelectorAll('.cam img[src]').length === 0));
+    await current.evaluate(() => window.__setHidden(false));
   });
   section = 'Run integrity';
   report.sourceAfter = hashes();

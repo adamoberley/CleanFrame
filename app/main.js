@@ -35,7 +35,7 @@
   var KEY = 'cleanframe.home.v1', storageOk = true, catalog = { loading: false, loaded: false, error: null, request: 0, revision: 0 };
   var QA = window.ShoreQA = {};
   /* One system typeface (FONT_STACK). Width measurements are cached. */
-  var fontState = null, fontsReady = false, widthCache = {}, fontRevision = 0;
+  var widthCache = {};
   var LOOK_VALUES = { source: ['art'], bg: ['photo'], layout: ['list', 'dock'], apps: ['icons', 'both', 'text'], controls: ['icons', 'both', 'text'], focus: ['type', 'glass'], inputs: ['connected', 'always'], clock: ['off', 'time', 'weather'] };
   var VALUE_NAMES = { list: 'List', dock: 'Dock', type: 'Text', glass: 'Glass', icons: 'Icons', both: 'Icons and text', text: 'Text', connected: 'When connected', always: 'Always', off: 'Off', time: 'Clock', weather: 'With weather' };
   var UTIL = { lights: ['Lights', 'lights'], cameras: ['Cameras', 'cameras'], apps: ['Apps', 'apps'], settings: ['Settings', 'settings'] };
@@ -48,7 +48,7 @@
     try { c = JSON.parse(localStorage.getItem('cleanframe.controls.v1')); } catch (e) { c = null; }
     if (!c || typeof c !== 'object') return out;
     out.lights = c.lights === true;
-    if (typeof c.go2rtc === 'string' && /^http:\/\/(?:10|192\.168|172\.(?:1[6-9]|2\d|3[01]))(?:\.\d{1,3}){2,3}:\d{2,5}$/.test(c.go2rtc)) out.go2rtc = c.go2rtc;
+    if (typeof c.go2rtc === 'string' && /^http:\/\/(?:10(?:\.\d{1,3}){3}|192\.168(?:\.\d{1,3}){2}|172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2}):\d{2,5}$/.test(c.go2rtc)) out.go2rtc = c.go2rtc;
     if (out.go2rtc && Array.isArray(c.cameras)) c.cameras.slice(0, 6).forEach(function (cam) {
       if (cam && typeof cam.name === 'string' && cam.name.trim() && typeof cam.src === 'string' && /^[A-Za-z0-9_-]{1,40}$/.test(cam.src)) {
         out.cameras.push({ name: cam.name.trim().slice(0, 40), src: cam.src, full: typeof cam.full === 'string' && /^[A-Za-z0-9_-]{1,40}$/.test(cam.full) ? cam.full : '' });
@@ -176,7 +176,6 @@
   /* The TV's own One UI Sans (as in Tizen's menus): nothing to download, so text is ready at
      once. Other platforms fall back to a standard sans-serif. */
   var FONT_STACK = '"One UI Sans APP", SamsungOneUI, "Samsung Sans", Roboto, "Helvetica Neue", Arial, sans-serif';
-  function ensureFont(done) { fontState = 'loaded'; fontsReady = true; done(); }
   function textWidth(text, size, weight, spacing) {
     var key = [text, size, weight, spacing].join('|'), width;
     if (widthCache.hasOwnProperty(key)) return widthCache[key];
@@ -215,7 +214,7 @@
     for (k in map) if (map.hasOwnProperty(k) && !seen[k]) { if (map[k].parentNode === parent) parent.removeChild(map[k]); delete map[k]; }
   }
   function setContent(el, sig, renderContent) {
-    sig += '|' + catalog.revision + '|' + fontRevision;
+    sig += '|' + catalog.revision;
     if (el._sig === sig) return;
     el.innerHTML = renderContent();
     el._sig = sig;
@@ -438,13 +437,12 @@
     }
     try {
       xhr.open('POST', window.FrameArt.bridge() + '/lights', true); xhr.timeout = 6000;
-      xhr.onload = function () { finish(xhr.status === 204); };
+      xhr.onload = function () { finish(xhr.status === 204 || xhr.status === 429); }; // 429: the press just before already went through.
       xhr.onerror = xhr.ontimeout = function () { finish(false); };
       xhr.send('');
     } catch (e) { finish(false); }
   }
   function openCameras() { push({ id: 'cameras', f: { i: 0 }, full: false, ratios: {} }); }
-  function addAppsRoute() { openEditor(); }
   function openSettings() { push({ id: 'settings', f: { id: S.settingsFocus } }); }
   function openAppearance(group) {
     var axis = { layout: 'layout' }[group];
@@ -483,7 +481,7 @@
       f.zone = 'apps';
       if (k === x.out) { f.zone = 'util'; f.u = clamp(S.lastUtil, 0, U.length - 1); }
       else if (k === 'back') openMessage('leave');
-      else if (!h.length) { if (k === 'ok') addAppsRoute(); }
+      else if (!h.length) { if (k === 'ok') openEditor(); }
       else if (k === x.prev && i > 0) setSel(h[i - 1]);
       else if (k === x.next && i < h.length - 1) setSel(h[i + 1]);
       else if (k === 'ok') launch(S.sel);
@@ -523,7 +521,7 @@
     else if (k === 'right') { f.zone = 'util'; f.u = nearestUtil(i, U); }
     else if (k === 'down' && i < h.length - 1) setSel(h[i + 1]);
     else if (k === 'back') openMessage('leave');
-    else if (k === 'ok') { if (h.length) launch(S.sel); else addAppsRoute(); }
+    else if (k === 'ok') { if (h.length) launch(S.sel); else openEditor(); }
   }
 
   /* ---------- Installed apps ---------- */
@@ -779,21 +777,27 @@
      hardware video layer behind the page) as go2rtc HLS: repackaged, not re-encoded. The player
      needs the avplay, network.public and tv.audio privileges and a Partner-signed package.
      The MJPEG frame shows until the video runs, and stays if the TV cannot play the stream. */
-  var full = { token: 0, playing: false };
+  var full = { token: 0 };
   function avplay() { return window.webapis && window.webapis.avplay; }
+  var webapisTried = false;
   function loadWebapis(done) {
-    if (avplay() || !window.tizen) { done(); return; }
+    if (avplay() || !window.tizen || webapisTried) { done(); return; }
+    webapisTried = true; // One attempt per launch; a failed load is not retried on every press.
     var s = document.createElement('script'); s.src = '$WEBAPIS/webapis/webapis.js';
     s.onload = s.onerror = function () { done(); }; document.head.appendChild(s);
   }
+  // While the TV's player shows a camera, the MJPEG tiles behind it are released so no
+  // decoder runs unseen; they reconnect when the player stops.
   function setFullClass(on) {
-    var root = document.documentElement;
+    var root = document.documentElement, was = root.className.indexOf('is-avplay') >= 0;
     root.className = root.className.replace(/ ?is-avplay/g, '') + (on ? ' is-avplay' : '');
+    if (on && !was) stopCameras(true);
+    else if (!on && was && top().id === 'cameras') render();
   }
   function stopFull() {
     full.token++;
     if (avplay()) { try { avplay().stop(); } catch (e) { /* Not playing. */ } try { avplay().close(); } catch (e) { /* Not open. */ } }
-    full.playing = false; setFullClass(false);
+    setFullClass(false);
   }
   function startFull(t) {
     var cam = CONTROLS.cameras[t.f.i], token;
@@ -811,13 +815,13 @@
         p.setDisplayMethod('PLAYER_DISPLAY_MODE_LETTER_BOX');
         p.prepareAsync(function () {
           if (token !== full.token) return;
-          p.play(); full.playing = true; setFullClass(true);
+          p.play(); setFullClass(true);
         }, function () { if (token === full.token) stopFull(); });
       } catch (e) { stopFull(); }
     });
   }
-  function stopCameras() {
-    stopFull();
+  function stopCameras(imagesOnly) {
+    if (!imagesOnly) stopFull();
     // Dropping the src closes each MJPEG connection; nothing streams once the view is gone.
     Array.prototype.forEach.call(sheetView.querySelectorAll('.cam img'), function (im) { im.onload = null; im.removeAttribute('src'); });
   }
@@ -825,7 +829,14 @@
   /* Tiles keep each camera's own shape (no crop, no bars). Every order of the cameras is
      tried as a row, a column, one tall tile beside a stack (either side), a wide tile above
      or below a row, and two rows; the arrangement that gives every camera the most picture wins. */
+  var layoutCache = { key: '', tiles: null };
+  // The search is pure in the ratios, so it runs once per set of camera shapes, never per key press.
   function cameraLayout(ratios) {
+    var key = ratios.map(function (r) { return r.toFixed(4); }).join(',');
+    if (key !== layoutCache.key) { layoutCache.key = key; layoutCache.tiles = searchCameraLayout(ratios); }
+    return layoutCache.tiles;
+  }
+  function searchCameraLayout(ratios) {
     var B = CAM_BOX, G = CAM_GAP, best = null, bestArea = -1;
     function row(list, x, y, w, h) {
       var sum = 0, height, cx, out = [];
@@ -881,7 +892,7 @@
       list.forEach(function (item, k) { orders(list.slice(0, k).concat(list.slice(k + 1))).forEach(function (o) { out.push([item].concat(o)); }); });
       return out;
     }
-    var items = ratios.map(function (r, i) { return { i: i, r: r }; }), all = items.length <= 5 ? orders(items) : [items];
+    var items = ratios.map(function (r, i) { return { i: i, r: r }; }), all = orders(items); // At most six cameras (720 orders), searched once per shape set.
     all.forEach(function (o) {
       var k;
       consider(row(o, B.x, B.y, B.w, B.h));
@@ -1004,7 +1015,7 @@
         weatherBusy = false;
         try { c = JSON.parse(xhr.responseText).current; } catch (e) { c = null; }
         if (xhr.status !== 200 || !c || typeof c.temperature_2m !== 'number' || typeof c.weather_code !== 'number') return;
-        weatherNow = { temp: Math.round(c.temperature_2m), kind: weatherKind(c.weather_code), day: c.is_day !== 0 };
+        weatherNow = { temp: Math.round(c.temperature_2m), kind: weatherKind(c.weather_code), day: c.is_day !== 0, at: Date.now() };
         try { localStorage.setItem('cleanframe.weather.last', JSON.stringify(weatherNow)); } catch (e) { /* Memory only. */ }
         render();
       };
@@ -1014,7 +1025,8 @@
   }
   function weatherHtml() {
     refreshWeather();
-    if (!weatherNow || typeof weatherNow.temp !== 'number' || !SVG['wx-' + weatherNow.kind]) return '';
+    // A reading older than three hours (or with no time) is not shown: stale weather misleads.
+    if (!WEATHER || !weatherNow || typeof weatherNow.temp !== 'number' || !SVG['wx-' + weatherNow.kind] || !(Date.now() - weatherNow.at < 3 * 3600000)) return '';
     var kind = weatherNow.kind === 'clear' && !weatherNow.day ? 'night' : weatherNow.kind;
     return '<span class="weather">' + icon('wx-' + kind) + '<span class="weather-temp">' + weatherNow.temp + '°</span></span>';
   }
@@ -1449,7 +1461,7 @@
       var tiles = cameraLayout(cameraRatios(t));
       Array.prototype.forEach.call(el.grid.querySelectorAll('.cam'), function (b, i) {
         var box = t.full ? fullBox(t.ratios[i] || 16 / 9) : tiles[i], im = b.querySelector('img');
-        if (!im.getAttribute('src')) {
+        if (!im.getAttribute('src') && document.documentElement.className.indexOf('is-avplay') < 0) {
           // First paint of this view starts the stream; its first frame reports the real shape.
           im.onload = function () { if (im.naturalWidth && im.naturalHeight && !t.ratios[i]) { t.ratios[i] = im.naturalWidth / im.naturalHeight; if (top() === t) render(); } };
           im.src = cameraURL(CONTROLS.cameras[i]);
@@ -1515,22 +1527,25 @@
     if (bundle && bundle.artURL) window.FrameArt.retain(bundle.artURL);
     if (bundle) setTimeout(frostSheet, 0);
   }
-  /* Sheets (Settings, Apps, Leave, ...) sit on a frosted copy of the Art photo so
-     they feel like the same place. The frost is made once per photo by drawing it
-     down to 160x90; the browser's smooth upscale does the blur. No live filter. */
-  /* Made once per photo, never on navigation:
+  /* Sheets (Settings, Apps, Leave, ...) and the dock mat sit on a frosted copy of the Art
+     photo so they feel like the same place. Made once per photo (and kept across launches),
+     never on navigation:
      - frost: a 480x270 copy with a real Gaussian blur (canvas filter), so its upscale is smooth;
        where canvas filters are missing, a halving-then-doubling ladder approximates the blur.
      - preview: a small unblurred JPEG kept in localStorage so the next launch shows the photo
        at once instead of the stage colour while the 4K image decodes. */
-  var frostFor = '', frostURL = '', PREVIEW_KEY = 'cleanframe.art.preview.v1';
+  var frostFor = '', frostURL = '', PREVIEW_KEY = 'cleanframe.art.preview.v1', FROST_KEY = 'cleanframe.art.frost.v1';
   function canvas(w, h) { var c = document.createElement('canvas'); c.width = w; c.height = h; return c; }
   function frostSheet() {
     var im = IMG.photo, src = im && im.src, base, out, ctx, w, h, step, next;
     if (!src || !im.naturalWidth) { IMG.bg.className = 'sheet-bg'; IMG.mat.className = 'mat-img'; return; }
-    if (src !== frostFor && src.indexOf('data:') !== 0) {
-      frostFor = src; frostURL = '';
-      try {
+    var rev = S.shown && S.shown.artRevision || src, saved = null;
+    if (rev !== frostFor && src.indexOf('data:') !== 0) {
+      frostFor = rev; frostURL = '';
+      // Same Art photo as last launch: reuse the stored frost; no 4K draw or encode on startup.
+      try { saved = JSON.parse(localStorage.getItem(FROST_KEY)); } catch (e) { saved = null; }
+      if (saved && saved.rev === rev && /^data:image\/jpeg;base64,/.test(saved.frost || '')) frostURL = saved.frost;
+      else try {
         base = canvas(480, 270); base.getContext('2d').drawImage(im, 0, 0, 480, 270);
         try { localStorage.setItem(PREVIEW_KEY, base.toDataURL('image/jpeg', 0.72)); } catch (e) { /* Preview is optional. */ }
         out = canvas(480, 270); ctx = out.getContext('2d');
@@ -1544,6 +1559,7 @@
           ctx.drawImage(step, 0, 0);
         }
         frostURL = out.toDataURL('image/jpeg', 0.9);
+        try { localStorage.setItem(FROST_KEY, JSON.stringify({ rev: rev, frost: frostURL })); } catch (e) { /* Rebuilt next launch. */ }
       } catch (e) { frostURL = ''; } // A tainted or failed draw keeps the plain matte.
     }
     if (!frostURL) { IMG.bg.className = 'sheet-bg'; IMG.mat.className = 'mat-img'; return; }
@@ -1564,7 +1580,7 @@
   }
   function cancelLook() { window.FrameArt.cancel(); lookToken++; S.pending = null; S.lookError = null; }
   function setLook(patch, options) {
-    var opts = options || {}, changes = cleanPatch(patch), target = lookOf(S.c), k, token, needs, needsFont, changed, loadedBundle = null, imageDone, fontDone, failed = false;
+    var opts = options || {}, changes = cleanPatch(patch), target = lookOf(S.c), k, token, needs, changed, loadedBundle = null, imageDone, failed = false;
     for (k in changes) if (changes.hasOwnProperty(k)) target[k] = changes[k];
     changed = Object.keys(target).some(function (key) { return target[key] !== S.c[key]; });
     cancelLook(); S.err = null; token = lookToken;
@@ -1586,13 +1602,13 @@
       }); });
     }
     function complete() {
-      if (!imageDone || !fontDone || failed || token !== lookToken) return;
+      if (!imageDone || failed || token !== lookToken) return;
       if (document.hidden) { finish(loadedBundle); return; }
       window.requestAnimationFrame(function () { if (!failed && token === lookToken) finish(loadedBundle); });
     }
     needs = S.bundleKey !== bundleKey();
-    needsFont = !fontState; imageDone = !needs; fontDone = !needsFont;
-    if (!needs && !needsFont) { finish(null); return; }
+    imageDone = !needs;
+    if (!needs) { finish(null); return; }
     S.pending = { patch: changes, target: target, row: opts.row || S.appearanceFocus };
     if (needs) loadBundle(token, function (bundle) {
       if (!bundle) {
@@ -1603,7 +1619,6 @@
       }
       loadedBundle = bundle; imageDone = true; complete();
     }, opts.startup);
-    if (needsFont) ensureFont(function () { fontDone = true; complete(); });
     render();
   }
   function restoreLook() {
@@ -1751,7 +1766,7 @@
     out.focusAction = focusedAction(); out.writes = S.writes; out.failedWrites = S.failed; out.error = S.err;
     out.catalog = { loading: catalog.loading, loaded: catalog.loaded, error: catalog.error, ids: ALPHA.slice() };
     out.visibleHome = visibleHome(); out.hdmi4Connected = !!homeSources.ports[4]; out.inputPorts = homeSources.ports;
-    out.fonts = { loaded: fontState === 'loaded', baselineFallback: fontState === 'fallback' };
+    out.fonts = { loaded: true, baselineFallback: false }; // The system font needs no loading.
     out.draft = t.lifted ? { id: t.lifted.id, order: t.lifted.order.slice() } : null;
     out.settingsGroup = t.id === 'appearance' ? t.group : null;
     out.focusedChoice = item && item.axis ? { axis: item.axis, value: item.value, action: item.action } : null;
@@ -1764,7 +1779,7 @@
     Array.prototype.forEach.call(active, function (el) { if (renderedAction(el)) { count++; if (el.getAttribute('data-action') === action) name = el.getAttribute('aria-label') || el.textContent.replace(/\s+/g, ' ').trim(); } });
     return { view: top().id, settingsGroup: top().id === 'appearance' ? top().group : null, focus: name, focusAction: action, focusCount: count, zone: top().f.zone || null };
   };
-  QA.ready = function () { return fontsReady && !S.pending && !!S.shown; };
+  QA.ready = function () { return !S.pending && !!S.shown; };
   QA.nav = function () { var keys = arguments.length === 1 && Array.isArray(arguments[0]) ? arguments[0] : Array.prototype.slice.call(arguments); keys.forEach(function (key) { if (!NAV[key]) throw new Error('Unknown key'); press(NAV[key]); }); return QA.state(); };
   QA.look = function (patch) { setLook(patch, {}); return QA.state(); };
   QA.holding = function () { return !!hold; };
