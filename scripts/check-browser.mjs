@@ -791,12 +791,13 @@ try {
     await page();
     check('Unconfigured Home shows only Apps and Settings', same(await current.evaluate(() => [...document.querySelectorAll('#utils .u')].map(b => b.getAttribute('aria-label'))), ['Apps', 'Settings']));
     await closePage();
-    const camHits = [], lightPosts = [];
+    const camHits = [], lightPosts = [], streamURLs = [];
     const jpeg = (w, h) => current.evaluate(([w, h]) => { const c = document.createElement('canvas'); c.width = w; c.height = h; c.getContext('2d').fillRect(0, 0, w, h); return c.toDataURL('image/jpeg').split(',')[1]; }, [w, h]);
     await page({}, async p => {
       await p.addInitScript(() => localStorage.setItem('cleanframe.controls.v1', JSON.stringify({ lights: true, go2rtc: 'http://192.168.1.2:1984', cameras: [{ name: 'Front door', src: 'doorbell', full: 'doorbell_hd' }, { name: 'Backyard', src: 'backyard' }, { name: 'Nursery', src: 'nursery' }] })));
       await p.route('http://192.168.1.2:1984/**', async route => {
         const src = new URL(route.request().url()).searchParams.get('src'); camHits.push(src);
+        if (route.request().url().includes('/stream.mjpeg')) streamURLs.push(route.request().url());
         const size = { doorbell: [480, 640], backyard: [1920, 576], nursery: [1280, 720] }[src];
         await route.fulfill({ contentType: 'image/jpeg', body: Buffer.from(await jpeg(...size), 'base64') });
       });
@@ -836,7 +837,10 @@ try {
     check('A camera without a full-quality stream never opens the player after settling', await current.evaluate(() => window.__avplay.filter(l => l.startsWith('open')).length === 1));
     await nav('left'); await current.waitForFunction(() => document.documentElement.classList.contains('is-avplay'));
     await current.evaluate(() => { window.__avplay.length = 0; }); // Each check below sees only what its own key did.
-    await nav('back');
+    const streamsBeforeBack = streamURLs.length;
+    await nav('back'); await current.waitForTimeout(100);
+    const reconnected = streamURLs.slice(streamsBeforeBack);
+    check('Tiles reconnect after playback with new requests on unique URLs', reconnected.length === 3 && new Set(streamURLs).size === streamURLs.length, reconnected);
     check('Back from playback stops the player and reconnects every tile', await current.evaluate(() => !document.documentElement.classList.contains('is-avplay') && window.__avplay.includes('stop') && window.__avplay.includes('close') && document.querySelectorAll('.cam .cam-live[src]').length === 3), await current.evaluate(() => window.__avplay));
     await current.evaluate(() => { window.__avplay.length = 0; window.webapis.avplay.prepareAsync = (ok, fail) => setTimeout(() => fail({ name: 'InvalidAccessError' }), 10); });
     await nav('ok'); await current.waitForTimeout(150);

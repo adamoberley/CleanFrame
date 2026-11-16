@@ -8,7 +8,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const jpeg = readFileSync(root + 'scripts/fixtures/art-test.jpg');
 const size = require('../vetro/cleanframe-art/index.js').jpegSize(jpeg);
-const first = createHash('sha256').update('fixture A').digest('hex'), second = createHash('sha256').update('fixture B').digest('hex'), third = createHash('sha256').update('fixture C').digest('hex');
+const first = createHash('sha256').update('fixture A').digest('hex'), second = createHash('sha256').update('fixture B').digest('hex'), third = createHash('sha256').update('fixture C').digest('hex'), fourth = createHash('sha256').update('fixture D').digest('hex');
 // Includes retired fields (wall, material, font, mode) that migration accepts and drops.
 const seed = { look: { bg: 'photo', wall: 'misty', source: 'art', layout: 'dock', focus: 'glass', material: 'soft', font: 'inter', apps: 'both', controls: 'both' }, mode: '15' };
 const out = root + '.local/qa/'; mkdirSync(out, { recursive: true });
@@ -114,6 +114,17 @@ try {
   await p.evaluate(() => ShoreQA.nav('back'));
   await p.waitForFunction(revision => ShoreQA.state().view === 'home' && ShoreQA.state().shown.artRevision === revision, third);
   check('A newer photo cancelled in Visual is installed on returning Home', stillOld && (await state()).writes === 0);
+  // The bridge read itself cut off by Back in Visual is started again on returning Home.
+  hidden.revision = fourth; hidden.hold = true;
+  await p.waitForTimeout(5100);
+  await p.evaluate(() => { __visibility(true); __visibility(false); });
+  await hidden.whenHeld;
+  await p.evaluate(() => ShoreQA.scene('appearance')); await p.evaluate(() => ShoreQA.nav('back'));
+  hidden.hold = false; const readsBefore = hidden.calls.filter(c => c === '/current.json').length;
+  await p.evaluate(() => ShoreQA.nav('back'));
+  await p.waitForFunction(revision => ShoreQA.state().view === 'home' && ShoreQA.state().shown.artRevision === revision, fourth);
+  check('An Art read cancelled in Visual starts again on returning Home', hidden.calls.filter(c => c === '/current.json').length === readsBefore + 1);
+  for (const route of hidden.held.splice(0)) await route.abort().catch(() => {});
   await fresh({ seed: {} });
   await p.waitForFunction(() => !!ShoreQA.state().shown.artRevision);
   const defaults = (await state()).dock;

@@ -141,8 +141,8 @@
   function push(e) { S.stack.push(e); return e; }
   function pop() {
     if (S.stack.length > 1) S.stack.pop();
-    // Back on Home: a newer Art photo whose install was cancelled in Visual is installed now.
-    if (artInstallCancelled && top().id === 'home') setTimeout(refreshArt, 0);
+    // Back on Home: an Art read or a newer photo's install cancelled in Visual is finished now.
+    if ((artInstallCancelled || artRefreshCancelled) && top().id === 'home') setTimeout(refreshArt, 0);
   }
   function px(n) { return n.toFixed(2) + 'px'; }
   function icon(name, cls, underlay) {
@@ -514,7 +514,7 @@
       function reconnect() {
         if (!im.getAttribute('src')) return;
         b.className = b.className.replace(' is-live', '');
-        clearTimeout(b._retry); im.removeAttribute('src'); im.className = 'cam-live'; im.src = cameraURL(cam, true);
+        clearTimeout(b._retry); im.removeAttribute('src'); im.className = 'cam-live'; im.src = cameraURL(cam);
       }
       takeSnapshot(b, cam, function (snap) {
         still.src = snap.src; cameraOffline(b, false); learnCamera(top(), i, snap.naturalWidth / snap.naturalHeight); reconnect();
@@ -859,8 +859,8 @@
     },
     point: function (t, z, i) { if (z === 'cam') { t.f.i = i; this.key(t, 'ok'); } }
   };
-  // fresh: a reconnect needs a new URL, or the browser may keep the stalled connection.
-  function cameraURL(cam, fresh) { return CONTROLS.go2rtc + '/api/stream.mjpeg?src=' + encodeURIComponent(cam.src) + (fresh ? '&t=' + Date.now() : ''); }
+  // Unique per connection: the browser could otherwise reuse a stalled connection or an old frame.
+  function cameraURL(cam) { return CONTROLS.go2rtc + '/api/stream.mjpeg?src=' + encodeURIComponent(cam.src) + '&t=' + Date.now(); }
   // Unique per request: the browser would otherwise reuse the first snapshot on every later open.
   function cameraStillURL(cam) { return CONTROLS.go2rtc + '/api/frame.jpeg?src=' + encodeURIComponent(cam.src) + '&t=' + Date.now(); }
   /* Full screen plays the camera's full-quality stream through the TV's own player (AVPlay, a
@@ -1586,7 +1586,7 @@
             im.className = 'cam-live is-failed'; clearTimeout(b._retry);
             b._retry = setTimeout(function () {
               if (!im.getAttribute('src') || !document.body.contains(im)) return;
-              im.removeAttribute('src'); im.className = 'cam-live'; im.src = cameraURL(cam, true);
+              im.removeAttribute('src'); im.className = 'cam-live'; im.src = cameraURL(cam);
               // A snapshot alongside tells whether the camera itself is reachable.
               if (!b._snap) takeSnapshot(b, cam, function (snap) { still.src = snap.src; cameraOffline(b, false); }, function () { cameraOffline(b, true); });
             }, 10000);
@@ -1712,7 +1712,11 @@
     }
     return out;
   }
-  function cancelLook() { window.FrameArt.cancel(); lookToken++; S.pending = null; S.lookError = null; }
+  function cancelLook() {
+    // A bridge read cut off here (for example by Back in Visual) is started again on reaching Home.
+    if (artRefreshing) { artRefreshing = false; artRefreshCancelled = true; }
+    window.FrameArt.cancel(); lookToken++; S.pending = null; S.lookError = null;
+  }
   function setLook(patch, options) {
     var opts = options || {}, changes = cleanPatch(patch), target = lookOf(S.c), k, token, needs, changed, loadedBundle = null, imageDone, failed = false;
     for (k in changes) if (changes.hasOwnProperty(k)) target[k] = changes[k];
@@ -1764,15 +1768,17 @@
     else setLook({}, { transient: true });
   }
 
-  var artInstallCancelled = false;
+  var artInstallCancelled = false, artRefreshing = false, artRefreshCancelled = false;
   function refreshArt() {
     if (document.hidden || top().id !== 'home' || S.pending) return;
     // A known newer photo whose background install was cancelled (Back in Visual) is installed now.
     if (artInstallCancelled) { artInstallCancelled = false; setLook({}, { transient: true }); return; }
+    if (artRefreshCancelled) { artRefreshCancelled = false; artRefreshAt = 0; }
     if (Date.now() - artRefreshAt < 5000) return;
-    artRefreshAt = Date.now();
+    artRefreshAt = Date.now(); artRefreshing = true;
     var token = lookToken;
     window.FrameArt.refresh(function (fresh) {
+      artRefreshing = false;
       if (!fresh || token !== lookToken || document.hidden || top().id !== 'home' || S.pending) return;
       if (artRecord && artRecord.revision === fresh.revision) return;
       artRecord = fresh;
