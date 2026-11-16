@@ -14,10 +14,16 @@ from Vetro, MIT, Copyright (c) 2026 Vetro contributors).
 ## How it is started
 
 The CleanFrame Vetro bridge (`vetro/cleanframe-art`) carries the build base64-encoded and unpacks it
-to `pip/` beside its config. With `pip.stream` set in the bridge config, the bridge subscribes to
-`vetro/cleanframe/doorbell` on the MQTT broker Vetro is configured for (reusing Vetro's saved login,
-with its own client id). `ring` starts the overlay with `systemd-run --unit=cleanframe-pip`; `clear`
-closes it early. Retained messages are ignored.
+to `pip/` beside its config. `pip/` and `pip/res` get the same checks as the art cache (created
+0700, never a symlink or another user's, canonical path) and the files are written 0600; the bridge
+records each file's sha256 as it unpacks. With `pip.stream` set in the bridge config, the bridge
+subscribes to `vetro/cleanframe/doorbell` on the MQTT broker Vetro is configured for (reusing Vetro's
+saved login, with its own client id) once its HTTP listener is up, and retries every 60 s while the
+settings are missing or MQTT is off. `ring` starts the overlay as root with
+`systemd-run --unit=cleanframe-pip`, but only after the root command re-checks every file against the
+recorded hashes (`sha256sum`, or `openssl dgst -sha256` if that is missing); on any mismatch nothing
+runs and the bridge status shows `PiP start failed`. `clear` closes it early. Retained messages are
+ignored, and a malformed packet just drops the connection, which reconnects after 10 s.
 
 ```json
 { "pip": { "stream": "http://192.168.1.2:1984/api/stream.mjpeg?src=doorbell_sub", "seconds": 30 } }
