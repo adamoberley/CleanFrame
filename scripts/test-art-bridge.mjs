@@ -25,17 +25,18 @@ function pref(c = content(), extra = {}) {
 async function freePort() {
   const s = net.createServer(); await new Promise(r => s.listen(0, '127.0.0.1', r)); const port = s.address().port; await new Promise(r => s.close(r)); return port;
 }
-function get(port, path = '/current.json', origin = 'null', method = 'GET') {
+function get(port, path = '/current.json', origin = 'null', method = 'GET', extra = {}) {
   return new Promise((resolve, reject) => {
-    const request = http.request({ host: '127.0.0.1', port, path, method, agent: false, headers: origin === undefined ? {} : { Origin: origin } }, res => {
+    const request = http.request({ host: '127.0.0.1', port, path, method, agent: false, headers: { ...(origin === undefined ? {} : { Origin: origin }), ...extra } }, res => {
       const chunks = []; res.on('data', c => chunks.push(c)); res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks) }));
     }); request.on('error', reject); request.end();
   });
 }
-async function harness(run) {
+async function harness(run, options = {}) {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), 'cleanframe-art-'))), port = await freePort();
   let input = pref(), image = jpeg, hold, calls = [], afterCopy, executeError = false, settingsImpl = () => Promise.reject(new Error('no Art channel'));
-  const bridge = shard({ dir, artSettings: timeout => settingsImpl(timeout), config: { get: () => ({ port }) }, execute: async (cmd, timeout) => {
+  const { config = {}, ...ctx } = options;
+  const bridge = shard({ dir, artSettings: timeout => settingsImpl(timeout), config: { get: () => ({ port, ...config }) }, ...ctx, execute: async (cmd, timeout) => {
     calls.push(cmd); assert.equal(timeout, 4000);
     if (executeError) return { stdout: 'PRIVATE OUTPUT', stderr: 'PRIVATE KEYS', exit_code: 1, timed_out: true };
     if (hold) await hold;
@@ -78,22 +79,44 @@ test('Art picture settings keep only bounded brightness and colour temperature',
   assert.equal(shard.artHost({ id: 'me', clients: clients.slice(1) }), null);
   assert.equal(shard.artHost({ id: 'me', clients: [{ id: 'bad id;', isHost: true }] }), null);
 });
-test('current.json never waits for Art settings, then reports the last good value', async () => {
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+test('current.json waits briefly for a stale Art look, then reports the last good value', async () => {
   await harness(async ({ port, setSettings }) => {
     let reads = 0, release;
+    // A slow Art channel: the reply waits at most lookWaitMs (here 150 ms) and carries no look.
     setSettings(timeout => { reads++; assert.equal(timeout, 8000); return new Promise(r => { release = () => r({ brightness: 5, colorTemperature: 3 }); }); });
-    let res = await get(port);
+    let t = Date.now(), res = await get(port);
     assert.equal(res.status, 200); assert.equal(JSON.parse(res.body).look, undefined);
-    release(); await new Promise(r => setTimeout(r, 20));
-    res = await get(port);
-    assert.deepEqual(JSON.parse(res.body).look, { brightness: 5, colorTemperature: 3 });
+    assert.ok(Date.now() - t >= 140 && Date.now() - t < 1000, 'waited ' + (Date.now() - t));
+    // The read is coalesced: a second request joins it instead of starting another.
+    const second = get(port); await sleep(20); release();
+    assert.deepEqual(JSON.parse((await second).body).look, { brightness: 5, colorTemperature: 3 });
     assert.equal(reads, 1);
+    res = await get(port);
+    assert.deepEqual(JSON.parse(res.body).look, { brightness: 5, colorTemperature: 3 }); assert.equal(reads, 1);
+    // Stale again and the channel fails: the last good look is kept.
     setSettings(() => Promise.reject(new Error('channel closed')));
-    await new Promise(r => setTimeout(r, 3100));
-    await get(port); await new Promise(r => setTimeout(r, 20));
+    await sleep(70);
     res = await get(port);
     assert.equal(res.status, 200); assert.deepEqual(JSON.parse(res.body).look, { brightness: 5, colorTemperature: 3 });
     assert.deepEqual(Object.keys(JSON.parse(res.body)).sort(), ['contentId', 'height', 'imageUrl', 'look', 'revision', 'width']);
+  }, { lookMaxAgeMs: 50, lookWaitMs: 150 });
+});
+test('a changed Art look shows on the first current.json when the read answers within 800 ms', async () => {
+  await harness(async ({ port, setSettings }) => {
+    let value = { brightness: 5, colorTemperature: 3 }, reads = 0;
+    setSettings(() => { reads++; return sleep(100).then(() => value); });
+    assert.deepEqual(JSON.parse((await get(port)).body).look, { brightness: 5, colorTemperature: 3 });
+    value = { brightness: 2, colorTemperature: -1 };
+    await sleep(70);
+    assert.deepEqual(JSON.parse((await get(port)).body).look, { brightness: 2, colorTemperature: -1 });
+    assert.equal(reads, 2);
+  }, { lookMaxAgeMs: 50 });
+  // The real 800 ms limit: a 1.5 s read never holds the reply past it.
+  await harness(async ({ port, setSettings }) => {
+    setSettings(() => sleep(1500).then(() => ({ brightness: 5, colorTemperature: 0 })));
+    const t = Date.now(), res = await get(port), took = Date.now() - t;
+    assert.equal(JSON.parse(res.body).look, undefined); assert.ok(took >= 750 && took < 1400, 'took ' + took);
   });
 });
 test('MQTT packets are framed, bounded and parsed for the doorbell topic', () => {
@@ -115,11 +138,11 @@ test('an unchanged Art selection reuses the cached JPEG without another copy', a
     const first = JSON.parse((await get(port)).body);
     const copies = () => calls.filter(c => c.startsWith('set -e;')).length;
     assert.equal(copies(), 1);
-    await new Promise(r => setTimeout(r, 1600));
+    await sleep(60);
     const again = JSON.parse((await get(port)).body);
     assert.equal(again.revision, first.revision); assert.equal(copies(), 1);
     assert.equal((await get(port, again.imageUrl)).status, 200);
-  });
+  }, { reuseMs: 50 });
 });
 test('uploaded ID/path allowlist rejects injection, aliases and traversal', () => {
   for (const id of ['../MY_A', 'MY_..', 'MY_A\n', 'MY_a;id', 'MY_a$(id)', "MY_a'b", 'STORE_A', 'MY_' + 'a'.repeat(65)]) assert.throws(() => shard.imagePath(id, PHOTO + id + '.jpg'));
@@ -187,11 +210,11 @@ test('oversized JPEG, dimension mismatch and bounded revision eviction fail safe
     h.setImage(Buffer.alloc(12 * 1024 * 1024 + 1)); assert.equal((await get(h.port)).status, 503);
     h.setImage(jpeg); h.setInput(pref(content('MY_TEST', { ImageWidth: dimensions.width + 1 }))); assert.equal((await get(h.port)).status, 503);
     h.setInput(pref()); const a = JSON.parse((await get(h.port)).body);
-    await new Promise(r => setTimeout(r, 1510)); h.setInput(pref(content('MY_B'))); const b = JSON.parse((await get(h.port)).body);
-    await new Promise(r => setTimeout(r, 1510)); h.setInput(pref(content('MY_C'))); const c = JSON.parse((await get(h.port)).body);
+    await sleep(60); h.setInput(pref(content('MY_B'))); const b = JSON.parse((await get(h.port)).body);
+    await sleep(60); h.setInput(pref(content('MY_C'))); const c = JSON.parse((await get(h.port)).body);
     assert.equal((await get(h.port, a.imageUrl)).status, 404); assert.equal((await get(h.port, b.imageUrl)).status, 200); assert.equal((await get(h.port, c.imageUrl)).status, 200);
     assert.equal(readdirSync(join(h.dir, 'art-cache')).length, 2);
-  });
+  }, { reuseMs: 50 });
 });
 test('invalid configured ports never open a listener', async () => {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), 'cleanframe-art-')));
@@ -223,7 +246,6 @@ test('TV interface mode refuses other LAN clients and nonlocal bindings', () => 
 });
 
 /* ---------- Lights, doorbell PiP and MQTT lifecycle ---------- */
-const sleep = ms => new Promise(r => setTimeout(r, ms));
 const sha256 = b => createHash('sha256').update(b).digest('hex');
 const STREAM = 'http://192.168.1.2:1984/api/stream.mjpeg?src=doorbell&x=1';
 const PIP = { 'cleanframe-pip.dll': Buffer.from('fake dll'), 'cleanframe-pip.runtimeconfig.json': Buffer.from('{"runtimeOptions":{}}'), 'res/frame.png': Buffer.from('frame'), 'res/mask.png': Buffer.from('mask') };
@@ -247,18 +269,35 @@ test('/lights fires the fixed Vetro rule: 204, 429 when pressed again, 502 on fa
     let body = ''; req.on('data', c => { body += c; }); req.on('end', () => {
       seen.push({ method: req.method, url: req.url, body });
       if (mode === 'ok') { res.writeHead(200); res.end('{}'); } else if (mode === 'fail') { res.writeHead(500); res.end(); }
+      else { setTimeout(() => { res.writeHead(200); res.end(); }, 500); }
     });
   });
   try {
-    await withBridge({ vetroPort: upstream.address().port, lightsTimeoutMs: 200 }, async ({ port }) => {
+    await withBridge({ vetroPort: upstream.address().port, lightsTimeoutMs: 200, lightsIntervalMs: 100 }, async ({ port }) => {
       assert.equal((await get(port, '/lights', 'null', 'POST')).status, 204);
       assert.deepEqual(seen, [{ method: 'POST', url: '/remap/run', body: '{"type":"http","value":"cleanframe-lights"}' }]);
       assert.equal((await get(port, '/lights', 'null', 'POST')).status, 429);
       assert.equal(seen.length, 1);
-      await sleep(1510); mode = 'fail';
+      await sleep(110); mode = 'fail';
       assert.equal((await get(port, '/lights', 'null', 'POST')).status, 502);
-      await sleep(1510); mode = 'hang';
-      const t = Date.now(); assert.equal((await get(port, '/lights', 'null', 'POST')).status, 502); assert.ok(Date.now() - t < 1500);
+      // A failure starts no rate limit: an immediate retry reaches Vetro again instead of a 429.
+      assert.equal((await get(port, '/lights', 'null', 'POST')).status, 502); assert.equal(seen.length, 3);
+      mode = 'ok';
+      assert.equal((await get(port, '/lights', 'null', 'POST')).status, 204); assert.equal(seen.length, 4);
+      assert.equal((await get(port, '/lights', 'null', 'POST')).status, 429);
+      await sleep(110); mode = 'hang';
+      const t = Date.now(), hung = get(port, '/lights', 'null', 'POST');
+      await sleep(50);
+      // A press while one is still running is refused, not sent twice.
+      assert.equal((await get(port, '/lights', 'null', 'POST')).status, 429);
+      assert.equal((await hung).status, 502); assert.ok(Date.now() - t < 1500);
+      // A timeout is a failure too: the next press tries again.
+      mode = 'ok'; assert.equal((await get(port, '/lights', 'null', 'POST')).status, 204);
+    });
+    // The default limit is 1.5 s after a success.
+    await withBridge({ vetroPort: upstream.address().port }, async ({ port }) => {
+      assert.equal((await get(port, '/lights', 'null', 'POST')).status, 204);
+      await sleep(1000); assert.equal((await get(port, '/lights', 'null', 'POST')).status, 429);
     });
     // Nothing listening upstream.
     await withBridge({ vetroPort: await freePort() }, async ({ port }) => { assert.equal((await get(port, '/lights', 'null', 'POST')).status, 502); });
@@ -320,17 +359,17 @@ test('stream URLs need exactly four octets on a private network', async () => {
 // Runs ring()'s root command in a real sh with stub systemctl/systemd-run, so the verification itself is exercised.
 function shellExecute(tools) {
   const bin = realpathSync(mkdtempSync(join(tmpdir(), 'cleanframe-bin-'))), log = join(bin, 'started');
-  for (const name of ['systemctl', 'systemd-run']) { writeFileSync(join(bin, name), '#!/bin/sh\necho "' + name + ' $*" >> ' + JSON.stringify(log) + '\n', { mode: 0o755 }); }
-  for (const name of tools) { const found = spawnSync('sh', ['-c', 'command -v ' + name]).stdout.toString().trim(); if (found) symlinkSync(found, join(bin, name)); }
-  return { bin, log, started: () => { try { return readFileSync(log, 'utf8').split('\n').filter(l => l.startsWith('systemd-run')); } catch { return []; } },
+  for (const name of ['systemctl', 'systemd-run', ...(tools.includes('pkill') ? ['pkill'] : [])]) { writeFileSync(join(bin, name), '#!/bin/sh\necho "' + name + ' $*" >> ' + JSON.stringify(log) + '\n', { mode: 0o755 }); }
+  for (const name of tools.filter(n => n !== 'pkill')) { const found = spawnSync('sh', ['-c', 'command -v ' + name]).stdout.toString().trim(); if (found) symlinkSync(found, join(bin, name)); }
+  return { bin, log, killed: () => { try { return readFileSync(log, 'utf8').split('\n').filter(l => l.startsWith('pkill')); } catch { return []; } }, started: () => { try { return readFileSync(log, 'utf8').split('\n').filter(l => l.startsWith('systemd-run')); } catch { return []; } },
     execute: async cmd => { const r = spawnSync('/bin/sh', ['-c', cmd], { env: { PATH: bin } }); return { stdout: r.stdout.toString(), stderr: '', exit_code: r.status, timed_out: false }; } };
 }
 
 test('ring verifies the unpacked hashes as root, quotes the stream URL and reports failure', async () => {
   for (const hasher of ['sha256sum', 'openssl']) {
-    const sh = shellExecute(['rm', 'cut', 'mkdir', 'cat', hasher]);
+    const sh = shellExecute(['rm', 'cut', 'mkdir', 'cat', 'chmod', 'mv', 'pkill', hasher]);
     try {
-      await withBridge({ config: { pip: { stream: STREAM, seconds: 12 } }, execute: sh.execute }, async ({ bridge, dir, calls }) => {
+      await withBridge({ config: { pip: { stream: STREAM, seconds: 12 } }, execute: sh.execute, ringIntervalMs: 50 }, async ({ bridge, dir, calls }) => {
         const out = join(dir, 'pip');
         assert.equal(await bridge._test.ring(), true, hasher);
         const cmd = calls[0];
@@ -342,21 +381,44 @@ test('ring verifies the unpacked hashes as root, quotes the stream URL and repor
         assert.ok(!cmd.includes('echo ok'));
         assert.equal(sh.started().length, 1); assert.ok(sh.started()[0].includes('--unit=cleanframe-pip'));
         assert.equal(bridge.status().doorbell.error, null);
+        // The previous log is kept as pip.log.1; the copy is re-made and pkill stops a fallback overlay.
+        const root = join(dir, 'pip-root');
+        writeFileSync(join(root, 'pip.log'), 'last ring');
+        await sleep(60); assert.equal(await bridge._test.ring(), true);
+        assert.equal(readFileSync(join(root, 'pip.log.1'), 'utf8'), 'last ring'); assert.equal(existsSync(join(root, 'pip.log')), false);
+        assert.equal(sh.killed().length, 2); assert.ok(sh.killed()[0].includes('dotnet ' + join(root, 'cleanframe-pip.dll').replace(/\./g, '\\.')));
+        assert.equal(statSync(root).mode & 0o777, 0o700);
         // A changed dll after unpack: nothing starts and the error is reported.
         writeFileSync(join(out, 'cleanframe-pip.dll'), 'tampered');
-        await sleep(3010);
+        await sleep(60);
         assert.equal(await bridge._test.ring(), false);
-        assert.equal(sh.started().length, 1); assert.equal(bridge.status().doorbell.error, 'PiP start failed');
+        assert.equal(sh.started().length, 2); assert.equal(bridge.status().doorbell.error, 'PiP start failed');
       });
     } finally { rmSync(sh.bin, { recursive: true, force: true }); }
   }
-  // Neither hashing tool: fail closed.
-  const sh = shellExecute(['rm', 'cut', 'mkdir', 'cat']);
+  // Neither hashing tool: fail closed. No pkill either: that alone is fine.
+  const sh = shellExecute(['rm', 'cut', 'mkdir', 'cat', 'chmod', 'mv']);
   try {
     await withBridge({ config: { pip: { stream: STREAM } }, execute: sh.execute }, async ({ bridge }) => {
       assert.equal(await bridge._test.ring(), false); assert.equal(sh.started().length, 0);
     });
   } finally { rmSync(sh.bin, { recursive: true, force: true }); }
+  // No pkill and a working hasher: the overlay still starts.
+  const sh2 = shellExecute(['rm', 'cut', 'mkdir', 'cat', 'chmod', 'mv', 'sha256sum', 'openssl']);
+  try {
+    await withBridge({ config: { pip: { stream: STREAM } }, execute: sh2.execute }, async ({ bridge }) => {
+      assert.equal(await bridge._test.ring(), true); assert.equal(sh2.started().length, 1); assert.equal(sh2.killed().length, 0);
+    });
+  } finally { rmSync(sh2.bin, { recursive: true, force: true }); }
+});
+
+test('the PiP stop pattern matches only the overlay process, never the root shell running the command', () => {
+  const dll = '/run/cleanframe-pip/cleanframe-pip.dll', re = new RegExp(shard.pkillPattern(dll));
+  assert.ok(re.test('/usr/bin/dotnet ' + dll + ' --url x --seconds 30'));
+  assert.ok(re.test('dotnet ' + dll));
+  assert.ok(!re.test("/bin/sh -c set -e; systemd-run --unit=cleanframe-pip /usr/bin/env HOME=/home/owner /usr/bin/dotnet '" + dll + "' --url x"));
+  assert.ok(!re.test('/usr/bin/dotnet /run/cleanframe-pipXcleanframe-pip.dll'));
+  assert.ok(!re.test('/usr/bin/dotnet ' + dll + '.bak'));
 });
 
 test('ring does nothing without a dll or a configured stream', async () => {
@@ -446,4 +508,52 @@ test('missing MQTT settings retry while running; a failed listen never leaves MQ
       await bridge.stop(); rmSync(dir, { recursive: true, force: true });
     } finally { await new Promise(r => blocker.close(r)); rmSync(dir0, { recursive: true, force: true }); }
   } finally { await b.close(); }
+});
+
+test('a configured key is required on every request except preflight', async () => {
+  const KEY = 'k3y-for-tests-0123456789abcdef', H = { 'X-CleanFrame-Key': KEY };
+  let hits = 0; const upstream = await server((req, res) => { hits++; req.resume(); res.writeHead(200); res.end(); });
+  try {
+    await harness(async ({ bridge, port }) => {
+      assert.equal(bridge.status().keyed, true);
+      assert.ok(!JSON.stringify(bridge.status()).includes(KEY));
+      const meta = JSON.parse((await get(port, '/current.json', 'null', 'GET', H)).body);
+      for (const path of ['/current.json', meta.imageUrl]) {
+        for (const wrong of [{}, { 'X-CleanFrame-Key': KEY.slice(0, -1) + 'X' }, { 'X-CleanFrame-Key': KEY + 'x' }, { 'X-CleanFrame-Key': '' }, { 'X-CleanFrame-Key': 'x'.repeat(2000) }]) {
+          const r = await get(port, path, 'null', 'GET', wrong); assert.equal(r.status, 403, path); assert.equal(r.body.length, 0);
+        }
+        // No Origin (a packaged client) needs the key too.
+        assert.equal((await get(port, path, undefined)).status, 403);
+        assert.equal((await get(port, path, 'null', 'GET', H)).status, 200, path);
+        const pre = await get(port, path, 'null', 'OPTIONS', { 'Access-Control-Request-Method': 'GET', 'Access-Control-Request-Headers': 'x-cleanframe-key' });
+        assert.equal(pre.status, 204); assert.equal(pre.headers['access-control-allow-methods'], 'GET');
+        assert.equal(pre.headers['access-control-allow-headers'], 'X-CleanFrame-Key'); assert.equal(pre.headers['access-control-max-age'], '600');
+        assert.equal(pre.headers['access-control-allow-origin'], 'null');
+      }
+      assert.equal((await get(port, '/lights', 'null', 'POST')).status, 403);
+      assert.equal((await get(port, '/lights', 'null', 'POST', { 'X-CleanFrame-Key': 'wrong' })).status, 403);
+      assert.equal(hits, 0);
+      assert.equal((await get(port, '/lights', 'null', 'POST', H)).status, 204); assert.equal(hits, 1);
+      const pre = await get(port, '/lights', 'null', 'OPTIONS');
+      assert.equal(pre.status, 204); assert.equal(pre.headers['access-control-allow-methods'], 'POST'); assert.equal(pre.headers['access-control-allow-headers'], 'X-CleanFrame-Key');
+      // Preflight keeps the origin check, and is refused for paths the bridge does not serve.
+      assert.equal((await get(port, '/current.json', 'https://example.com', 'OPTIONS')).status, 403);
+      assert.equal((await get(port, '/config.json', 'null', 'OPTIONS', H)).status, 405);
+    }, { config: { key: KEY }, vetroPort: upstream.address().port });
+  } finally { await closeServer(upstream); }
+  // No key: today's behaviour, reported as unkeyed.
+  await harness(async ({ bridge, port }) => {
+    assert.equal(bridge.status().keyed, false);
+    assert.equal((await get(port)).status, 200);
+    assert.equal((await get(port, '/current.json', 'null', 'GET', { 'X-CleanFrame-Key': 'anything' })).status, 200);
+    assert.equal((await get(port, '/lights', 'null', 'OPTIONS')).headers['access-control-allow-headers'], 'X-CleanFrame-Key');
+  });
+  // A key that is too short or not a string never opens a listener.
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'cleanframe-art-')));
+  try {
+    for (const key of ['short', 'a'.repeat(23), 42, 'has a space in it 0123456789', 'x'.repeat(257)]) {
+      const port = await freePort(), bridge = shard({ dir, config: { get: () => ({ port, key }) }, execute: () => { throw Error('Unexpected execute'); } });
+      await assert.rejects(bridge.start(), /Invalid bridge key/); assert.equal(bridge.status().running, false);
+    }
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });
