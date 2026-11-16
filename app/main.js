@@ -40,8 +40,9 @@
   var VALUE_NAMES = { list: 'List', dock: 'Dock', type: 'Text', glass: 'Glass', icons: 'Icons', both: 'Icons and text', text: 'Text', connected: 'When connected', always: 'Always', off: 'Off', time: 'Clock', weather: 'With weather' };
   var UTIL = { lights: ['Lights', 'lights'], cameras: ['Cameras', 'cameras'], apps: ['Apps', 'apps'], settings: ['Settings', 'settings'] };
   /* Optional owner controls, configured on the TV (never in public source):
-     cleanframe.controls.v1 = { lights: true, go2rtc: 'http://192.168.x.y:1984', cameras: [{ name, src, full }] }.
+     cleanframe.controls.v1 = { lights: true, go2rtc: 'http://192.168.x.y:1984', cameras: [{ name, src, full, ratio }] }.
      src is the go2rtc stream for the MJPEG grid; full, if set, is the full-quality stream for full screen.
+     ratio, if set ("3:4"), places the tile before any frame arrives.
      Without it, Home shows only Apps and Settings. */
   // A camera's shape, as "3:4" or a number; 0 when unknown.
   function cameraRatioValue(v) {
@@ -455,8 +456,8 @@
     } catch (e) { finish(false); }
   }
   /* Cameras open in their final places at once: each camera's shape comes from its config
-     (ratio) or from the last time it was seen, and each tile shows the last still it saved,
-     then a fresh snapshot, then the live stream. Saved per stream in cleanframe.cameras.v1. */
+     (ratio) or from the last time it was seen (saved per stream in cleanframe.cameras.v1).
+     Each tile shows a quick JPEG snapshot, then the live stream over it. */
   var CAM_KEY = 'cleanframe.cameras.v1';
   function cameraMemory() { var m = null; try { m = JSON.parse(localStorage.getItem(CAM_KEY)); } catch (e) { m = null; } return m && typeof m === 'object' ? m : {}; }
   function rememberCamera(src, patch) {
@@ -808,15 +809,6 @@
   };
   function cameraURL(cam) { return CONTROLS.go2rtc + '/api/stream.mjpeg?src=' + encodeURIComponent(cam.src); }
   function cameraStillURL(cam) { return CONTROLS.go2rtc + '/api/frame.jpeg?src=' + encodeURIComponent(cam.src); }
-  // A small copy of the first live frame, kept for an instant still next time. Skipped quietly
-  // where the TV will not let the page read the stream's pixels.
-  function saveStill(cam, im) {
-    try {
-      var w = 320, h = Math.round(w * im.naturalHeight / im.naturalWidth), c = document.createElement('canvas');
-      c.width = w; c.height = h; c.getContext('2d').drawImage(im, 0, 0, w, h);
-      rememberCamera(cam.src, { still: c.toDataURL('image/jpeg', 0.6) });
-    } catch (e) { /* Cross-origin frame: no still saved. */ }
-  }
   /* Full screen plays the camera's full-quality stream through the TV's own player (AVPlay, a
      hardware video layer behind the page) as go2rtc HLS: repackaged, not re-encoded. The player
      needs the avplay, network.public and tv.audio privileges and a Partner-signed package.
@@ -867,7 +859,11 @@
   function stopCameras(imagesOnly) {
     if (!imagesOnly) stopFull();
     // Dropping the src closes each MJPEG connection; nothing streams once the view is gone.
-    Array.prototype.forEach.call(sheetView.querySelectorAll('.cam .cam-live'), function (im) { im.onload = null; im.removeAttribute('src'); });
+    Array.prototype.forEach.call(sheetView.querySelectorAll('.cam'), function (b) {
+      var im = b.querySelector('.cam-live');
+      if (im) { im.onload = im.onerror = null; im.removeAttribute('src'); }
+      if (b._snap) { b._snap.onload = b._snap.onerror = null; b._snap.src = ''; b._snap = null; }
+    });
   }
   var CAM_BOX = { x: 80, y: 168, w: 1760, h: 808 }, CAM_GAP = 24;
   /* Tiles keep each camera's own shape (no crop, no bars). Every order of the cameras is
@@ -1191,6 +1187,7 @@
   }
   /* A wide label can reach the shelf before its icon. Check the rendered icon box,
      including during the track's 180ms transition, so both disappear together. */
+  var lastDockEdges = '';
   function syncDockEdges() {
     var broad = S.c.layout === 'dock', clip = shelf.getBoundingClientRect(), changes = [];
     Array.prototype.forEach.call(track.querySelectorAll('.tile'), function (tile) {
@@ -1212,6 +1209,9 @@
     var items = hs.items, n = items.length, empty = !n, g = dockGeom(empty ? -1 : n);
     var anchor = clamp(hs.i, 0, Math.max(0, n - 1)), off = empty ? 0 : dockOffset(n, anchor, g);
     var tileFocus = hs.zone === 'apps', tileSel = hs.zone === 'util' || hs.zone === 'preview';
+    // Edge tiles are re-measured only when the shelf actually moves or changes, not on every key.
+    var edgeSig = off + '|' + n + '|' + g.pitch + '|' + g.shelf + '|' + S.c.apps + '|' + items.map(function (it) { return it.id; }).join(','), moved = edgeSig !== lastDockEdges;
+    lastDockEdges = edgeSig;
 
     dock.className = 'dock' + (empty ? ' is-empty' : '');
     dock.style.left = g.x + 'px'; dock.style.top = g.y + 'px'; dock.style.width = g.w + 'px'; dock.style.height = g.h + 'px';
@@ -1226,15 +1226,15 @@
       var a = app(it.id), left = i * g.pitch, focus = tileFocus && i === anchor, sel = tileSel && i === anchor;
       var partial = g.broad && (left - off < -1 || left + g.tw - off > g.shelf + 1);
       setContent(el, it.id + '|' + dockLabelSize(it.id) + '|' + S.c.apps, function () { return '<span class="tile-content">' + dockTileHtml(it.id) + '</span>'; });
-      el.className = 'tile' + (focus ? ' is-focus' : '') + (sel ? ' is-sel' : '') + (partial ? ' is-partial' : '') + (S.press === it.id ? ' is-press' : '');
+      el.className = 'tile' + (focus ? ' is-focus' : '') + (sel ? ' is-sel' : '') + (partial ? ' is-partial' : '') + (S.press === it.id ? ' is-press' : '') + (!moved && el.className.indexOf('is-outside-icon') >= 0 ? ' is-outside-icon' : '');
       el.style.transform = 'translate3d(' + left + 'px,0,0)';
       el.setAttribute('role', 'button');
       el.setAttribute('aria-label', a.name);
       attrs(el, 'app', i, 'home.app.' + it.id);
     });
     track.style.transform = 'translate3d(' + (-off) + 'px,0,0)';
-    syncDockEdges();
-    if (g.broad) {
+    if (moved) syncDockEdges();
+    if (moved && g.broad) {
       dockEdgeUntil = Date.now() + 220;
       if (!dockEdgeFrame) dockEdgeFrame = window.requestAnimationFrame(trackDockEdges);
     }
@@ -1510,32 +1510,36 @@
     cameras: function (t, el) {
       var tiles = cameraLayout(cameraRatios(t));
       Array.prototype.forEach.call(el.grid.querySelectorAll('.cam'), function (b, i) {
-        var box = t.full ? fullBox(t.ratios[i] || 16 / 9) : tiles[i], im = b.querySelector('.cam-live'), still = b.querySelector('.cam-still'), cam = CONTROLS.cameras[i], saved;
+        var box = t.full ? fullBox(t.ratios[i] || 16 / 9) : tiles[i], im = b.querySelector('.cam-live'), still = b.querySelector('.cam-still'), cam = CONTROLS.cameras[i];
+        function learn(r) {
+          if (t.ratios[i] && Math.abs(t.ratios[i] - r) <= 0.01) return;
+          t.ratios[i] = r; rememberCamera(cam.src, { r: Math.round(r * 1000) / 1000 });
+          if (top() === t) render();
+        }
         // Streams run only where seen: every tile in the grid, only the chosen one in full screen,
         // and none while the TV player shows it.
         var wanted = document.documentElement.className.indexOf('is-avplay') < 0 && (!t.full || i === t.f.i);
         if (!wanted && im.getAttribute('src')) { im.onload = im.onerror = null; im.removeAttribute('src'); b.className = b.className.replace(' is-live', ''); }
-        if (wanted && !still.getAttribute('src')) {
-          // Instant: last saved still. Then a fresh snapshot, unless the live stream wins.
-          saved = cameraMemory()[cam.src];
-          if (saved && /^data:image\/jpeg;base64,/.test(saved.still || '')) still.src = saved.still;
-          (function (snap) {
-            snap.onload = function () { if (snap.naturalWidth) still.src = snap.src; };
-            snap.src = cameraStillURL(cam);
-          }(new Image()));
+        if (wanted && !still.getAttribute('src') && !b._snap) {
+          // A plain JPEG snapshot shows something quickly and tells us the camera's shape.
+          b._snap = new Image();
+          b._snap.onload = function () {
+            var snap = b._snap; b._snap = null;
+            if (!snap || !snap.naturalWidth || !snap.naturalHeight) return;
+            still.src = snap.src;
+            learn(snap.naturalWidth / snap.naturalHeight);
+          };
+          b._snap.onerror = function () { b._snap = null; };
+          b._snap.src = cameraStillURL(cam);
         }
         if (wanted && !im.getAttribute('src')) {
           im.className = 'cam-live';
           im.onerror = function () { im.className = 'cam-live is-failed'; };
-          // Where the browser reports frames, learn the shape and keep a still for next time.
+          // Where the browser reports frames, mark the tile live and learn the shape.
           im.onload = function () {
             if (!im.naturalWidth || !im.naturalHeight) return;
-            if (b.className.indexOf('is-live') < 0) { b.className += ' is-live'; saveStill(cam, im); }
-            var r = im.naturalWidth / im.naturalHeight;
-            if (!t.ratios[i] || Math.abs(t.ratios[i] - r) > 0.01) {
-              t.ratios[i] = r; rememberCamera(cam.src, { r: Math.round(r * 1000) / 1000 });
-              if (top() === t) render();
-            }
+            if (b.className.indexOf('is-live') < 0) b.className += ' is-live';
+            learn(im.naturalWidth / im.naturalHeight);
           };
           im.src = cameraURL(cam);
         }
@@ -1845,12 +1849,11 @@
     out.art = window.FrameArt.status(); out.committed = S.c; out.shown = S.shown; out.pending = S.pending; out.view = t.id; out.selected = S.sel;
     out.focusAction = focusedAction(); out.writes = S.writes; out.failedWrites = S.failed; out.error = S.err;
     out.catalog = { loading: catalog.loading, loaded: catalog.loaded, error: catalog.error, ids: ALPHA.slice() };
-    out.visibleHome = visibleHome(); out.hdmi4Connected = !!homeSources.ports[4]; out.inputPorts = homeSources.ports;
+    out.visibleHome = visibleHome(); out.inputPorts = homeSources.ports;
     out.fonts = { loaded: true, baselineFallback: false }; // The system font needs no loading.
-    out.draft = t.lifted ? { id: t.lifted.id, order: t.lifted.order.slice() } : null;
     out.settingsGroup = t.id === 'appearance' ? t.group : null;
     out.focusedChoice = item && item.axis ? { axis: item.axis, value: item.value, action: item.action } : null;
-    out.candidate = out.focusedChoice ? { axis: item.axis, value: item.value, action: item.action, pending: !!S.pending, pendingTarget: S.pending ? S.pending.target : null } : null;
+    out.candidate = out.focusedChoice ? { axis: item.axis, value: item.value, action: item.action, pending: !!S.pending } : null;
     out.undo = S.undo.map(function (u) { return u.label; }); out.storageOk = storageOk;
     return JSON.parse(JSON.stringify(out));
   };

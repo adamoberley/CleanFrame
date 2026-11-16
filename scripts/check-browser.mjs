@@ -838,16 +838,31 @@ try {
     await current.evaluate(() => window.__setHidden(false));
     const layoutOf = () => current.evaluate(() => [...document.querySelectorAll('.cam')].map(b => b.style.cssText).join('|'));
     const settled = await (async () => { await act('util.cameras'); await current.waitForFunction(() => document.querySelectorAll('.cam.is-live').length === 3); const l = await layoutOf(); await nav('back'); return l; })();
-    await current.evaluate(() => { const m = JSON.parse(localStorage.getItem('cleanframe.cameras.v1')); m.doorbell.still = 'data:image/jpeg;base64,' + 'A'.repeat(200); localStorage.setItem('cleanframe.cameras.v1', JSON.stringify(m)); });
-    await current.evaluate(() => { window.__stills = []; new MutationObserver(list => list.forEach(r => { if (r.target.classList && r.target.classList.contains('cam-still')) window.__stills.push(r.target.getAttribute('src').slice(0, 40)); })).observe(document.body, { subtree: true, attributes: true, attributeFilter: ['src'] }); });
     await act('util.cameras');
     const first = await layoutOf(); // Before any frame of this visit has arrived.
     await current.waitForFunction(() => document.querySelectorAll('.cam.is-live').length === 3);
-    const stills = await current.evaluate(() => window.__stills);
-    const stillShown = stills[0] && stills[0].startsWith('data:image/jpeg') && stills.some(s => s.includes('/api/frame.jpeg'));
     check('Cameras open in their final places from remembered shapes', first === settled, { first, settled });
-    check('A saved still shows at once, then a fresh snapshot, while the stream connects', stillShown, stills);
+    await nav('back'); await closePage();
+    // As on the TV: the MJPEG stream never reports a load, so shapes come from the snapshot alone.
+    await page({}, async p => {
+      p.__expectedFailures.push('stream.mjpeg');
+      await p.addInitScript(() => localStorage.setItem('cleanframe.controls.v1', JSON.stringify({ go2rtc: 'http://192.168.1.2:1984', cameras: [{ name: 'Front door', src: 'doorbell' }, { name: 'Backyard', src: 'backyard', ratio: '10:3' }, { name: 'Nursery', src: 'nursery' }] })));
+      await p.route('http://192.168.1.2:1984/api/stream.mjpeg**', () => { /* Hangs, like a live MJPEG stream on the TV. */ });
+      await p.route('http://192.168.1.2:1984/api/frame.jpeg**', async route => {
+        const size = { doorbell: [480, 640], backyard: [1920, 576], nursery: [1280, 720] }[new URL(route.request().url()).searchParams.get('src')];
+        await route.fulfill({ contentType: 'image/jpeg', body: Buffer.from(await jpeg(...size), 'base64') });
+      });
+    });
+    await act('util.cameras');
+    const configured = await current.evaluate(() => { const r = document.querySelectorAll('.cam')[1].getBoundingClientRect(); return r.width / r.height; });
+    check('A configured shape places its tile before any picture arrives', Math.abs(configured - 10 / 3) < .02, configured);
+    await current.waitForFunction(() => [...document.querySelectorAll('.cam .cam-still')].every(i => i.naturalWidth));
+    await current.waitForTimeout(100);
+    const snapped = await current.evaluate(() => [...document.querySelectorAll('.cam')].map(b => { const r = b.getBoundingClientRect(), i = b.querySelector('.cam-still'); return { ratio: r.width / r.height, natural: i.naturalWidth / i.naturalHeight, live: b.classList.contains('is-live') }; }));
+    check('A quick snapshot fills each tile and teaches its shape while the stream connects', snapped.every(t => Math.abs(t.ratio - t.natural) < .02 && !t.live), snapped);
+    check('Learned shapes are remembered for next time', await current.evaluate(() => { const m = JSON.parse(localStorage.getItem('cleanframe.cameras.v1')); return Math.abs(m.doorbell.r - .75) < .01 && Math.abs(m.nursery.r - 16 / 9) < .01; }));
     await nav('back');
+    check('Leaving Cameras drops pending snapshots and streams', await current.evaluate(() => document.querySelectorAll('.cam .cam-live[src]').length === 0));
   });
   section = 'Run integrity';
   report.sourceAfter = hashes();

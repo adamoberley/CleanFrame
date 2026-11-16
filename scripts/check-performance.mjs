@@ -152,7 +152,7 @@ try {
   for (let i = 0; i < 4; i++) { await call('look', {}); await ready(); }
   await page.waitForTimeout(100);
   const afterSame = await memory();
-  check('Re-applying the current look reuses the Art bundle', beforeSame.images.resources === afterSame.images.resources && beforeSame.images.elements === afterSame.images.elements, { before: beforeSame.images, after: afterSame.images });
+  check('Re-applying the current look reuses the Art bundle', beforeSame.images.elements === afterSame.images.elements && JSON.stringify(beforeSame.images.sources) === JSON.stringify(afterSame.images.sources), { before: beforeSame.images, after: afterSame.images });
   // Prime the small cycle before comparing retained objects.
   for (const patch of cycle) { await call('look', patch); await ready(); }
   await page.waitForTimeout(300);

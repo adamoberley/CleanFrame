@@ -272,7 +272,7 @@
   function cancel() { epoch++; refreshing = false; requests.slice().forEach(function (xhr) { xhr.abort(); }); }
   window.FrameArt = { load: load, refresh: refresh, cancel: cancel, current: function () { return current; },
     status: function () { return { available: !!current, refreshing: refreshing, error: error }; },
-    look: function () { return { settings: look, style: lookStyle(look) }; }, lookFor: lookStyle,
+    lookFor: lookStyle,
     bridge: function () { return 'http://' + host() + ':' + port(); }, authorize: authorize,
     // Bound blob lifetimes once a new atomic bundle replaces every previous image.
     retain: function (url) { retainedURL = url; urls = urls.filter(function (item) { if (item === url || current && item === current.url) return true; window.URL.revokeObjectURL(item); return false; }); }
