@@ -25,7 +25,7 @@ const ALL_APPS_COUNT = SOURCE_NAMES.length + 12;
 const artFixture = readFileSync(root + 'scripts/fixtures/art-test.jpg');
 const out = root + '.local/qa/';
 mkdirSync(out, { recursive: true });
-const sourceFiles = ['app/main.js', 'app/art-mode.js', 'app/camera-layout.js', 'app/device.js', 'app/index.html', 'app/style.css', 'app/config.xml', 'app/assets/icons/metrics.js'];
+const sourceFiles = ['app/main.js', 'app/art-mode.js', 'app/camera-layout.js', 'app/cameras.js', 'app/device.js', 'app/index.html', 'app/style.css', 'app/config.xml', 'app/assets/icons/metrics.js'];
 const hashes = () => Object.fromEntries(sourceFiles.map(f => [f, createHash('sha256').update(readFileSync(root + f)).digest('hex')]));
 const report = { scope: 'Production UI in Chromium; mock public Tizen API only; no TV contacted.', sourceBefore: hashes(), checks: [], failures: [], pageErrors: [], expectedNetworkFailures: [] };
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
@@ -409,6 +409,13 @@ try {
     await group('layout'); await choice('inputs', 'connected'); await ready(); await scene('home');
     await current.waitForFunction(() => !ShoreQA.state().visibleHome.includes('hdmi1'));
     check('Returning to When connected hides disconnected HDMI 1 again', same(await shownHdmi(), ['hdmi2']) && (await stored()).look.inputs === 'connected');
+    await closePage();
+    // Before the TV reports its inputs, a last-used HDMI entry is hidden but keeps the selection:
+    // OK must open the app drawn focused, not the hidden input.
+    await page({ seed: baseline({ dock: ['hdmi1', 'netflix', 'youtube'], lastApp: 'hdmi1' }) }, p => p.addInitScript(() => { __tv.holdInputs = true; }));
+    const drawn = await current.evaluate(() => ShoreQA.where().focusAction);
+    await current.evaluate(() => { __tv.calls = []; }); await nav('ok'); await current.waitForFunction(() => __tv.calls.length > 0);
+    check('OK before inputs are reported opens the app drawn focused', drawn === 'home.app.netflix' && await current.evaluate(() => !__tv.calls.some(c => c.method === 'setSource') && __tv.calls.some(c => /netflix/i.test(c.id || ''))), { drawn, calls: await current.evaluate(() => __tv.calls) });
     await closePage(); await page({ inputUnavailable: true, seed: baseline({ dock, lastApp: 'netflix' }) });
     check('Unavailable source API never invents connected HDMI entries', same((await state()).visibleHome, ['netflix', 'youtube']) && (await call('where')).focusCount === 1);
     await look({ inputs: 'always' });

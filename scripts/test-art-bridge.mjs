@@ -97,11 +97,11 @@ test('current.json waits briefly for a stale Art look, then reports the last goo
     assert.deepEqual(JSON.parse(res.body).look, { brightness: 5, colorTemperature: 3 }); assert.equal(reads, 1);
     // Stale again and the channel fails: the last good look is kept.
     setSettings(() => Promise.reject(new Error('channel closed')));
-    await sleep(70);
+    await sleep(700);
     res = await get(port);
     assert.equal(res.status, 200); assert.deepEqual(JSON.parse(res.body).look, { brightness: 5, colorTemperature: 3 });
     assert.deepEqual(Object.keys(JSON.parse(res.body)).sort(), ['contentId', 'height', 'imageUrl', 'look', 'revision', 'width']);
-  }, { lookMaxAgeMs: 50, lookWaitMs: 150 });
+  }, { lookMaxAgeMs: 600, lookWaitMs: 150 }); // Windows wide enough for a busy CI runner.
 });
 test('a changed Art look shows on the first current.json when the read answers within 800 ms', async () => {
   await harness(async ({ port, setSettings }) => {
@@ -109,10 +109,10 @@ test('a changed Art look shows on the first current.json when the read answers w
     setSettings(() => { reads++; return sleep(100).then(() => value); });
     assert.deepEqual(JSON.parse((await get(port)).body).look, { brightness: 5, colorTemperature: 3 });
     value = { brightness: 2, colorTemperature: -1 };
-    await sleep(70);
+    await sleep(700);
     assert.deepEqual(JSON.parse((await get(port)).body).look, { brightness: 2, colorTemperature: -1 });
     assert.equal(reads, 2);
-  }, { lookMaxAgeMs: 50 });
+  }, { lookMaxAgeMs: 600 });
   // The real 800 ms limit: a 4 s read never holds the reply past it (loose upper bound for busy runners).
   await harness(async ({ port, setSettings }) => {
     setSettings(() => sleep(4000).then(() => ({ brightness: 5, colorTemperature: 0 })));
@@ -274,19 +274,19 @@ test('/lights fires the fixed Vetro rule: 204, 429 when pressed again, 502 on fa
     });
   });
   try {
-    await withBridge({ vetroPort: upstream.address().port, lightsTimeoutMs: 200, lightsIntervalMs: 100 }, async ({ port }) => {
+    await withBridge({ vetroPort: upstream.address().port, lightsTimeoutMs: 200, lightsIntervalMs: 800 }, async ({ port }) => {
       assert.equal((await get(port, '/lights', 'null', 'POST')).status, 204);
       assert.deepEqual(seen, [{ method: 'POST', url: '/remap/run', body: '{"type":"http","value":"cleanframe-lights"}' }]);
       assert.equal((await get(port, '/lights', 'null', 'POST')).status, 429);
       assert.equal(seen.length, 1);
-      await sleep(110); mode = 'fail';
+      await sleep(850); mode = 'fail';
       assert.equal((await get(port, '/lights', 'null', 'POST')).status, 502);
       // A failure starts no rate limit: an immediate retry reaches Vetro again instead of a 429.
       assert.equal((await get(port, '/lights', 'null', 'POST')).status, 502); assert.equal(seen.length, 3);
       mode = 'ok';
       assert.equal((await get(port, '/lights', 'null', 'POST')).status, 204); assert.equal(seen.length, 4);
       assert.equal((await get(port, '/lights', 'null', 'POST')).status, 429);
-      await sleep(110); mode = 'hang';
+      await sleep(850); mode = 'hang';
       const t = Date.now(), hung = get(port, '/lights', 'null', 'POST');
       await sleep(50);
       // A press while one is still running is refused, not sent twice.

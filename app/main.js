@@ -44,11 +44,6 @@
      src is the go2rtc stream for the MJPEG grid; full, if set, is the full-quality stream for full screen.
      ratio, if set ("3:4"), places the tile until a snapshot has shown the camera's real shape.
      Without it, Home shows only Apps and Settings. */
-  // A camera's shape, as "3:4" or a number; 0 when unknown.
-  function cameraRatioValue(v) {
-    var m = typeof v === 'string' && /^(\d{1,4}):(\d{1,4})$/.exec(v), r = m ? Number(m[1]) / Number(m[2]) : Number(v);
-    return isFinite(r) && r >= 0.2 && r <= 6 ? r : 0;
-  }
   var CONTROLS = (function () {
     var c = null, out = { lights: false, go2rtc: '', cameras: [] };
     try { c = JSON.parse(localStorage.getItem('cleanframe.controls.v1')); } catch (e) { c = null; }
@@ -57,7 +52,7 @@
     if (typeof c.go2rtc === 'string' && /^http:\/\/(?:10(?:\.\d{1,3}){3}|192\.168(?:\.\d{1,3}){2}|172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2}):\d{2,5}$/.test(c.go2rtc)) out.go2rtc = c.go2rtc;
     if (out.go2rtc && Array.isArray(c.cameras)) c.cameras.slice(0, 6).forEach(function (cam) {
       if (cam && typeof cam.name === 'string' && cam.name.trim() && typeof cam.src === 'string' && /^[A-Za-z0-9_-]{1,40}$/.test(cam.src)) {
-        out.cameras.push({ name: cam.name.trim().slice(0, 40), src: cam.src, full: typeof cam.full === 'string' && /^[A-Za-z0-9_-]{1,40}$/.test(cam.full) ? cam.full : '', ratio: cameraRatioValue(cam.ratio) });
+        out.cameras.push({ name: cam.name.trim().slice(0, 40), src: cam.src, full: typeof cam.full === 'string' && /^[A-Za-z0-9_-]{1,40}$/.test(cam.full) ? cam.full : '', ratio: window.FrameCameras.ratioValue(cam.ratio) });
       }
     });
     return out;
@@ -436,7 +431,7 @@
   }
   function utilAction(u) {
     if (u === 'lights') pressLights();
-    else if (u === 'cameras') openCameras();
+    else if (u === 'cameras') CAMERAS.open();
     else if (u === 'apps') openApps();
     else openSettings();
   }
@@ -461,74 +456,8 @@
       xhr.send('');
     } catch (e) { finish(false); }
   }
-  /* Cameras open in their final places at once: each camera's shape comes from its config
-     (ratio) or, once seen, from its last snapshot (saved per stream in cleanframe.cameras.v1).
-     Each tile shows a quick JPEG snapshot, then the live stream over it. */
-  var CAM_KEY = 'cleanframe.cameras.v1';
-  function cameraMemory() { var m = null; try { m = JSON.parse(localStorage.getItem(CAM_KEY)); } catch (e) { m = null; } return m && typeof m === 'object' ? m : {}; }
-  function rememberCamera(src, patch) {
-    var m = cameraMemory(), k; m[src] = m[src] || {};
-    for (k in patch) if (patch.hasOwnProperty(k)) m[src][k] = patch[k];
-    try { localStorage.setItem(CAM_KEY, JSON.stringify(m)); } catch (e) { /* Memory only: next open waits for frames. */ }
-  }
-  function openCameras() {
-    var mem = cameraMemory(), ratios = {};
-    CONTROLS.cameras.forEach(function (cam, i) { var r = cameraRatioValue(mem[cam.src] && mem[cam.src].r) || cam.ratio; if (r) ratios[i] = r; });
-    push({ id: 'cameras', f: { i: 0 }, full: false, ratios: ratios });
-    clearInterval(camTick); camTicks = 0; camTick = setInterval(cameraTick, 10000);
-  }
-  /* While Cameras is open: every 10 s, retry snapshots that failed and recheck Offline tiles;
-     every 60 s, reconnect each live stream behind a fresh snapshot. A stream that stalls without an error (Wi-Fi blip,
-     go2rtc restarting) would otherwise freeze on its last frame, since the TV reports no frames. */
-  var camTick = 0, camTicks = 0;
-  // One snapshot per tile at a time. It is abandoned after 8 s, so a hung request cannot block
-  // later retries or the stall reconnect. The start time paces retries of a failed one.
-  function takeSnapshot(b, cam, ok, fail) {
-    var snap = new Image(), timer = setTimeout(function () { end(); snap.src = ''; fail(); }, 8000);
-    function end() { clearTimeout(timer); snap.onload = snap.onerror = null; if (b._snap === snap) b._snap = null; }
-    b._snap = snap; b._snapAt = Date.now(); b._snapEnd = end;
-    snap.onload = function () { end(); if (snap.naturalWidth && snap.naturalHeight) ok(snap); else fail(); };
-    snap.onerror = function () { end(); fail(); };
-    snap.src = cameraStillURL(cam);
-  }
-  // A tile whose latest snapshot failed says Offline and dims its last picture, so an old frame
-  // never passes for live. Any later snapshot (or, where reported, a live frame) clears it.
-  function cameraOffline(b, on) {
-    var has = b.className.indexOf(' is-offline') >= 0;
-    if (on && !has) b.className = b.className.replace(' is-live', '') + ' is-offline'; else if (!on && has) b.className = b.className.replace(' is-offline', '');
-  }
-  // A camera's real shape, learned from a snapshot or frame: remembered and laid out at once.
-  function learnCamera(t, i, r) {
-    if (t.ratios[i] && Math.abs(t.ratios[i] - r) <= 0.01) return;
-    t.ratios[i] = r; rememberCamera(CONTROLS.cameras[i].src, { r: Math.round(r * 1000) / 1000 });
-    if (top() === t) render();
-  }
-  function cameraWanted(t, i) { return document.documentElement.className.indexOf('is-avplay') < 0 && (!t.full || i === t.f.i); }
-  /* Reconnect a tile's stream behind a fresh snapshot. go2rtc is plain HTTP/1.1, so the browser
-     opens at most six connections to it, and six live tiles would hold them all: the tile's own
-     stream is closed first (and kept closed while paused), then the snapshot, then the stream
-     reconnects whatever the snapshot's outcome. */
-  function refreshTile(b, i) {
-    var im = b.querySelector('.cam-live'), still = b.querySelector('.cam-still'), cam = CONTROLS.cameras[i];
-    clearTimeout(b._retry); im.removeAttribute('src'); im.className = 'cam-live'; b.className = b.className.replace(' is-live', '');
-    b._paused = true;
-    // The redraw starts the stream (with its retry and shape handlers) if the tile is still wanted.
-    function reconnect() { b._paused = false; if (top().id === 'cameras' && document.body.contains(im)) render(); }
-    if (b._snap) { reconnect(); return; }
-    takeSnapshot(b, cam, function (snap) {
-      still.src = snap.src; cameraOffline(b, false); learnCamera(top(), i, snap.naturalWidth / snap.naturalHeight); reconnect();
-    }, function () { cameraOffline(b, true); reconnect(); });
-  }
-  function cameraTick() {
-    if (top().id !== 'cameras' || document.hidden) { clearInterval(camTick); camTick = 0; return; }
-    var all = !(++camTicks % 6);
-    Array.prototype.forEach.call(sheetView.querySelectorAll('.cam'), function (b, i) {
-      // Every minute every tile; every 10 s the ones showing Offline, so a camera that is back clears soon.
-      if (!b.querySelector('.cam-live').getAttribute('src') || b._snap || (!all && b.className.indexOf(' is-offline') < 0)) return;
-      refreshTile(b, i);
-    });
-    if (!all && sheetView.querySelector('.cam .cam-still:not([src])')) render(); // Retries snapshots that never arrived.
-  }
+  // The Cameras view (tiles, snapshots, streams, timers, the TV player) lives in cameras.js.
+  var CAMERAS = window.FrameCameras.create({ cameras: CONTROLS.cameras, go2rtc: CONTROLS.go2rtc, top: top, push: push, pop: pop, render: render, view: function () { return sheetView; } });
   function openSettings() { push({ id: 'settings', f: { id: S.settingsFocus } }); }
   function openAppearance(group) {
     // Visual (layout) is the only group: focus starts on the remembered row or the current layout.
@@ -570,7 +499,7 @@
       else if (!h.length) { if (k === 'ok') openEditor(); }
       else if (k === x.prev && i > 0) setSel(h[i - 1]);
       else if (k === x.next && i < h.length - 1) setSel(h[i + 1]);
-      else if (k === 'ok') launch(S.sel);
+      else if (k === 'ok') launch(h[i]); // The app drawn focused, even while a hidden input keeps the selection.
     },
     point: function (t, z, i) {
       if (z === 'util') { t.f.zone = 'util'; t.f.u = i; S.lastUtil = i; }
@@ -607,7 +536,7 @@
     else if (k === 'right') { f.zone = 'util'; f.u = nearestUtil(i, U); }
     else if (k === 'down' && i < h.length - 1) setSel(h[i + 1]);
     else if (k === 'back') openMessage('leave');
-    else if (k === 'ok') { if (h.length) launch(S.sel); else openEditor(); }
+    else if (k === 'ok') { if (h.length) launch(h[i]); else openEditor(); }
   }
 
   /* ---------- Installed apps ---------- */
@@ -849,101 +778,7 @@
   };
   function messageContent(t) { return t.content || MSG[t.msg]; }
   /* ---------- Cameras: loaded only while this view is open ---------- */
-  V.cameras = {
-    sheet: true,
-    key: function (t, k) {
-      var n = CONTROLS.cameras.length;
-      if (k === 'back') { if (t.full) { t.full = false; stopFull(); } else { stopCameras(); pop(); } return; }
-      if (k === 'ok') { t.full = !t.full; if (t.full) startFull(t); else stopFull(); return; }
-      if (t.full) {
-        // Stepping shows the next camera's MJPEG at once; the TV player starts only once the
-        // choice settles, so holding an arrow never opens and closes the player per step.
-        t.f.i = k === 'left' || k === 'up' ? (t.f.i + n - 1) % n : (t.f.i + 1) % n;
-        stopFull(); clearTimeout(full.settle);
-        full.settle = setTimeout(function () { if (top() === t && t.full) startFull(t); }, 350);
-        return;
-      }
-      t.f.i = cameraMove(t, k);
-    },
-    point: function (t, z, i) { if (z === 'cam') { t.f.i = i; this.key(t, 'ok'); } }
-  };
-  // Unique per connection: the browser could otherwise reuse a stalled connection or an old frame.
-  function cameraURL(cam) { return CONTROLS.go2rtc + '/api/stream.mjpeg?src=' + encodeURIComponent(cam.src) + '&t=' + Date.now(); }
-  // Unique per request: the browser would otherwise reuse the first snapshot on every later open.
-  function cameraStillURL(cam) { return CONTROLS.go2rtc + '/api/frame.jpeg?src=' + encodeURIComponent(cam.src) + '&t=' + Date.now(); }
-  /* Full screen plays the camera's full-quality stream through the TV's own player (AVPlay, a
-     hardware video layer behind the page) as go2rtc HLS: repackaged, not re-encoded. The player
-     needs the avplay, network.public and tv.audio privileges and a Partner-signed package.
-     The MJPEG frame shows until the video runs, and stays if the TV cannot play the stream. */
-  var full = { token: 0 };
-  function avplay() { return window.webapis && window.webapis.avplay; }
-  var webapisTried = false;
-  function loadWebapis(done) {
-    if (avplay() || !window.tizen || webapisTried) { done(); return; }
-    webapisTried = true; // One attempt per launch; a failed load is not retried on every press.
-    var s = document.createElement('script'); s.src = '$WEBAPIS/webapis/webapis.js';
-    s.onload = s.onerror = function () { done(); }; document.head.appendChild(s);
-  }
-  // While the TV's player shows a camera, the MJPEG tiles behind it are released so no
-  // decoder runs unseen; they reconnect when the player stops.
-  function setFullClass(on, leaving) {
-    var root = document.documentElement, was = root.className.indexOf('is-avplay') >= 0;
-    root.className = root.className.replace(/ ?is-avplay/g, '') + (on ? ' is-avplay' : '');
-    if (on && !was) stopCameras(true);
-    else if (!on && was && !leaving && top().id === 'cameras') render();
-  }
-  // leaving: Cameras is closing, so the tiles are not reconnected behind the player.
-  function stopFull(leaving) {
-    full.token++; clearTimeout(full.settle);
-    if (avplay()) { try { avplay().stop(); } catch (e) { /* Not playing. */ } try { avplay().close(); } catch (e) { /* Not open. */ } }
-    setFullClass(false, leaving);
-  }
-  function startFull(t) {
-    var cam = CONTROLS.cameras[t.f.i], token;
-    stopFull(); token = full.token;
-    if (!cam || !cam.full) return;
-    loadWebapis(function () {
-      var p = avplay();
-      if (!p || token !== full.token || top() !== t || !t.full) return;
-      // The player renders into the page's avplayer object.
-      if (!document.getElementById('avplayer')) { var o = document.createElement('object'); o.id = 'avplayer'; o.type = 'application/avplayer'; o.className = 'avplayer'; document.body.appendChild(o); }
-      try {
-        p.open(CONTROLS.go2rtc + '/api/stream.m3u8?src=' + encodeURIComponent(cam.full));
-        p.setListener({ onerror: function () { if (token === full.token) stopFull(); }, onstreamcompleted: function () { if (token === full.token) stopFull(); } });
-        p.setDisplayRect(0, 0, 1920, 1080);
-        p.setDisplayMethod('PLAYER_DISPLAY_MODE_LETTER_BOX');
-        p.prepareAsync(function () {
-          if (token !== full.token) return;
-          p.play(); setFullClass(true);
-        }, function () { if (token === full.token) stopFull(); });
-      } catch (e) { stopFull(); }
-    });
-  }
-  function stopCameras(imagesOnly) {
-    if (!imagesOnly) { clearInterval(camTick); camTick = 0; stopFull(true); }
-    // Dropping the src closes each MJPEG connection; nothing streams once the view is gone.
-    Array.prototype.forEach.call(sheetView.querySelectorAll('.cam'), function (b) {
-      var im = b.querySelector('.cam-live');
-      clearTimeout(b._retry);
-      if (im) { im.onload = im.onerror = null; im.removeAttribute('src'); }
-      if (b._snap) { var snap = b._snap; b._snapEnd(); snap.src = ''; }
-      b._paused = false; // Its reconnect will not run now; the next redraw starts the stream if wanted.
-    });
-  }
-  // Tile placement (pure, cached per set of shapes) lives in camera-layout.js.
-  var cameraLayout = window.FrameCameraLayout.layout, fullBox = window.FrameCameraLayout.fullBox;
-  function cameraRatios(t) { return CONTROLS.cameras.map(function (cam, i) { return t.ratios[i] || 16 / 9; }); }
-  function cameraMove(t, k) {
-    var tiles = cameraLayout(cameraRatios(t)), cur = tiles[t.f.i], best = t.f.i, gap = Infinity;
-    tiles.forEach(function (b) {
-      var dx = b.x + b.w / 2 - (cur.x + cur.w / 2), dy = b.y + b.h / 2 - (cur.y + cur.h / 2), d;
-      if (b.i === cur.i) return;
-      if (k === 'left' && dx >= -1 || k === 'right' && dx <= 1 || k === 'up' && dy >= -1 || k === 'down' && dy <= 1) return;
-      d = (k === 'left' || k === 'right' ? Math.abs(dx) + 2 * Math.abs(dy) : Math.abs(dy) + 2 * Math.abs(dx));
-      if (d < gap) { gap = d; best = b.i; }
-    });
-    return best;
-  }
+  V.cameras = { sheet: true, key: CAMERAS.key, point: CAMERAS.point };
   V.message = {
     sheet: true,
     key: function (t, k) {
@@ -1491,40 +1326,7 @@
       });
       setHTML(el.list, html);
     },
-    cameras: function (t, el) {
-      var tiles = cameraLayout(cameraRatios(t));
-      Array.prototype.forEach.call(el.grid.querySelectorAll('.cam'), function (b, i) {
-        var box = t.full ? fullBox(t.ratios[i] || 16 / 9) : tiles[i], im = b.querySelector('.cam-live'), still = b.querySelector('.cam-still'), cam = CONTROLS.cameras[i];
-        // Streams run only where seen: every tile in the grid, only the chosen one in full screen,
-        // and none while the TV player shows it.
-        var wanted = cameraWanted(t, i);
-        if (!wanted && im.getAttribute('src')) { clearTimeout(b._retry); im.onload = im.onerror = null; im.removeAttribute('src'); b.className = b.className.replace(' is-live', ''); }
-        // A plain JPEG snapshot shows something quickly and tells us the camera's shape. It comes
-        // before the stream (refreshTile), so six cameras never starve their own snapshots. One that
-        // failed is tried again by the 10 s camera tick (requests at least 9 s apart), not on every redraw.
-        if (wanted && !still.getAttribute('src') && !b._snap && !(Date.now() - (b._snapAt || 0) < 9000)) refreshTile(b, i);
-        if (wanted && !im.getAttribute('src') && !b._paused) {
-          im.className = 'cam-live';
-          // A stream that drops (camera offline, go2rtc restarting) reconnects every 10 s while shown.
-          im.onerror = function () {
-            im.className = 'cam-live is-failed'; clearTimeout(b._retry);
-            // Its snapshot also tells whether the camera itself is reachable.
-            b._retry = setTimeout(function () { if (im.getAttribute('src') && document.body.contains(im)) refreshTile(b, i); }, 10000);
-          };
-          // Where the browser reports frames (not the TV, for MJPEG), hide the still and learn the shape.
-          im.onload = function () {
-            if (!im.naturalWidth || !im.naturalHeight) return;
-            if (b.className.indexOf('is-live') < 0) b.className += ' is-live';
-            cameraOffline(b, false);
-            learnCamera(t, i, im.naturalWidth / im.naturalHeight);
-          };
-          im.src = cameraURL(cam);
-        }
-        b.className = 'cam' + (i === t.f.i ? ' is-focus' : '') + (t.full && i !== t.f.i ? ' is-hidden' : '') + (im.getAttribute('src') && b.className.indexOf('is-live') >= 0 ? ' is-live' : '') + (b.className.indexOf(' is-offline') >= 0 ? ' is-offline' : '');
-        b.style.left = box.x + 'px'; b.style.top = box.y + 'px'; b.style.width = box.w + 'px'; b.style.height = box.h + 'px';
-      });
-      sheetView.className = 'view' + (t.full ? ' cams-full' : '');
-    },
+    cameras: function (t, el) { CAMERAS.fill(t, el.grid); },
     message: function (t, el) {
       setHTML(el.acts, messageContent(t).actions.map(function (a, i) {
         return '<button type="button" tabindex="-1" class="btn' + (i === t.f.b ? ' is-focus' : '') + '" data-z="act" data-i="' + i + '" data-action="message.' + a[0] + '"><span>' + a[1] + '</span></button>';
@@ -1722,7 +1524,7 @@
   function after() { norm(); render(); }
   function goScene(name) {
     FrameDevice.cancelSource();
-    if (top().id === 'cameras') stopCameras();
+    if (top().id === 'cameras') CAMERAS.stop();
     S.stack = [S.stack[0]]; S.stack[0].f.zone = 'apps'; clearSession(); restoreLook();
     if (name === 'apps') openApps();
     else if (name === 'settings') openSettings();
@@ -1821,7 +1623,7 @@
       if (S.pending) cancelLook();
       else cancelArt();
       FrameDevice.cancelSource(); syncHomeSources(); clearTimeout(clockTimer);
-      if (top().id === 'cameras') { stopCameras(); pop(); render(); } }
+      if (top().id === 'cameras') { CAMERAS.stop(); pop(); render(); } }
     else {
       release();
       if (!S.pending && (!committedBundle || S.bundleKey !== bundleKey())) setLook({}, { transient: true, startup: true });

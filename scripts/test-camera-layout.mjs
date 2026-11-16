@@ -13,7 +13,12 @@ function sound(ratios) {
   tiles.forEach((t, i) => {
     assert.ok(Math.abs(t.w / t.h - ratios[i]) < 0.001, 'tile ' + i + ' keeps its shape');
     assert.ok(t.x >= box.x - 0.5 && t.y >= box.y - 0.5 && t.x + t.w <= box.x + box.w + 0.5 && t.y + t.h <= box.y + box.h + 0.5, 'tile ' + i + ' stays in the box');
-    tiles.slice(i + 1).forEach((u, j) => assert.ok(!overlap(t, u), 'tiles ' + i + ' and ' + (i + j + 1) + ' do not overlap'));
+    tiles.slice(i + 1).forEach((u, j) => {
+      assert.ok(!overlap(t, u), 'tiles ' + i + ' and ' + (i + j + 1) + ' do not overlap');
+      // Neighbours are separated by the gap along whichever axis keeps them apart.
+      const apart = Math.max(u.x - (t.x + t.w), t.x - (u.x + u.w), u.y - (t.y + t.h), t.y - (u.y + u.h));
+      assert.ok(apart >= gap - 0.5, 'tiles ' + i + ' and ' + (i + j + 1) + ' are ' + apart + ' px apart');
+    });
   });
   return tiles;
 }
@@ -30,7 +35,6 @@ test('one camera fills the box along one side, and full screen fits the stage', 
   assert.deepEqual(JSON.parse(JSON.stringify(fullBox(16 / 9))), { x: 0, y: 0, w: 1920, h: 1080 });
   const tall = fullBox(3 / 4); assert.equal(tall.h, 1080); assert.equal(tall.x, (1920 - 810) / 2);
 });
-test('the same shapes return the cached result; a gap separates neighbours', () => {
+test('the same shapes return the cached result', () => {
   const a = layout([3 / 4, 10 / 3, 16 / 9]); assert.equal(layout([3 / 4, 10 / 3, 16 / 9]), a);
-  assert.equal(gap, 24);
 });

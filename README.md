@@ -63,7 +63,7 @@ These are localStorage keys, set on the TV and never committed:
 ## Checks
 
 ```sh
-npm run check            # ES5 lint, resources, synthetic device-adapter tests
+npm run check            # ES5 lint, resources, device-adapter and camera-layout tests
 npm run check:tools      # signing/packaging tools with a fake SDK
 npm run check:art        # Art bridge parser, HTTP contract and widget cache
 npx playwright install chromium
@@ -76,7 +76,7 @@ None of these checks connects to a TV. Physical results are recorded in the [dev
 
 | Location | Purpose |
 | --- | --- |
-| `app/` | Packaged UI (`main.js`, `art-mode.js`, `device.js`) |
+| `app/` | Packaged UI (`main.js`, `art-mode.js`, `cameras.js`, `camera-layout.js`, `device.js`) |
 | `vetro/cleanframe-art/` | TV-local Art bridge (Vetro plugin) |
 | `native/doorbell-pip/` | Doorbell picture-in-picture overlay |
 | `scripts/` | Preview, checks, packaging and reference TV tools |
