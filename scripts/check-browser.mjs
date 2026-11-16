@@ -715,6 +715,28 @@ try {
     const held = (await call('where')).focusAction; await current.waitForTimeout(300);
     check('Held arrow moves at once, repeats from 280 ms and stops on release', early !== startAt && held !== early && (await call('where')).focusAction === held, { startAt, early, held });
   });
+  await run('List Glass focus and remote movement', async () => {
+    await page(); await look({ layout: 'list', focus: 'glass' }); await scene('home');
+    const plate = () => current.evaluate(() => { const el = document.querySelector('#phScene > .ph-plate.is-current'); return el ? el.className : ''; });
+    const at = async () => (await call('where')).focusAction;
+    const first = await at();
+    await nav('right');
+    check('Glass list shows one focus while Apps or Settings has it', /^util\./.test(await at()) && !/on-(focus|sel)/.test(await plate()) && (await call('where')).focusCount === 1, await plate());
+    await nav('left');
+    check('Right then Left returns to the same app', (await at()) === first);
+    await nav('down', 'down', 'down', 'down', 'down', 'down'); const deep = await at(); await nav('right', 'left');
+    check('Right then Left returns to a scrolled app', (await at()) === deep, deep);
+    await current.keyboard.press('ArrowUp'); await current.keyboard.press('ArrowUp');
+    const rapid = await current.evaluate(() => document.getElementById('stage').classList.contains('is-rapid'));
+    await current.waitForTimeout(450);
+    check('Fast presses drop the spring, which returns after a pause', rapid && !(await current.evaluate(() => document.getElementById('stage').classList.contains('is-rapid'))));
+    await current.keyboard.down('ArrowUp'); await current.waitForTimeout(1500);
+    const stalled = await at(), holding = await call('holding'); await current.waitForTimeout(300);
+    check('A hold with no TV repeat events stops after its watchdog', !holding && (await at()) === stalled);
+    await current.keyboard.up('ArrowUp');
+    await group('focus'); await current.waitForTimeout(250);
+    check('Settings Focus preview keeps a half plate on the selected app', /on-sel/.test(await plate()), await plate());
+  });
   section = 'Run integrity';
   report.sourceAfter = hashes();
   check('No unexpected browser/resource failures', report.pageErrors.length === 0, report.pageErrors);

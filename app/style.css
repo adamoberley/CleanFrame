@@ -175,6 +175,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000}
 .ph-group .mark{position:absolute;left:28px;top:32px}
 .ph-name{position:absolute;left:128px;top:10px;max-width:992px;font-size:88px;line-height:104px;font-weight:600;letter-spacing:-1.8px;color:var(--ph-ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-shadow:0 1px 2px rgba(14,10,6,.32),0 3px 14px rgba(14,10,6,.24)}
 .f-glass .ph-row.is-focus .ph-group{opacity:1;transform:scale(1.06)}
+.f-glass .ph-row.is-preview .ph-group{opacity:1}
 .f-glass .ph-row.is-focus .ph-name,.ph-row.is-lifted .ph-name{text-shadow:0 1px 2px rgba(14,10,6,.22)}
 .f-type .ph-group{opacity:.62}
 .f-type .ph-row.is-focus .ph-group{opacity:1;transform:scale(1.05)}
@@ -518,7 +519,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000}
 .s-head .btn>span,.s-head .btn>.ico{position:relative;z-index:1}
 .f-type .s-head .btn.is-focus,.f-type .header-utils .u.is-focus{transform:scale(1.05)}
 .f-glass .s-head .btn.is-focus::before,.f-glass .header-utils .u.is-focus::before{content:"";position:absolute;left:0;right:0;top:2px;height:60px;border-radius:30px;background:var(--plate);box-shadow:var(--plate-edge);pointer-events:none}
-@media(prefers-reduced-motion:reduce){.s-head .btn,.header-utils .u,.m-tint .mat-img,.m-tint .mat-scrim{transform:none!important}.ut-lens{transition:opacity 120ms linear!important}.ph-plate{transform:translateZ(0)!important}.f-glass .ph-row.is-focus .ph-group{transform:none}}
+@media(prefers-reduced-motion:reduce){.s-head .btn,.header-utils .u,.m-tint .mat-img,.m-tint .mat-scrim{transform:none!important}.ut-lens{transition:opacity 120ms linear!important}.ph-plate{transform:translateZ(0)!important}}
 
 /* Saved display choices alter content, not app identity or editing state. */
 .stage.is-reflow *{transition:none!important;animation:none!important}

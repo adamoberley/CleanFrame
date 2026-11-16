@@ -8,7 +8,7 @@
   var DOCK_MODES = { both: { tw: 288, th: 200, pitch: 296 }, text: { tw: 288, th: 104, pitch: 296 }, icons: { tw: 176, th: 144, pitch: 184 } };
   var GRID_ROW = 240, GRID_COL = 344, COLS = 5;
   var ED_ROW = 80, ED_SEP = 56, ED_VIEW = 752;
-  var PH_LEFT = 80, PH_TOP = 136, PH_LIST_TOP = 40, PH_PITCH = 128, PH_FULL = 7, PH_HEIGHT = 1040, PH_COMPACT_HEIGHT = 944, PH_COMPACT_TOP = 144, PH_COMPACT_PITCH = 88, PH_COMPACT_VISIBLE = 9, PH_PLATE_H = 106;
+  var PH_LEFT = 80, PH_TOP = 136, PH_LIST_TOP = 40, PH_PITCH = 128, PH_FULL = 7, PH_HEIGHT = 1040, PH_COMPACT_HEIGHT = 944, PH_COMPACT_TOP = 144, PH_COMPACT_PITCH = 88, PH_COMPACT_VISIBLE = 9, PH_PLATE_H = 106, PH_GROW = 1.06;
   var KEYS = { 37: 'left', 38: 'up', 39: 'right', 40: 'down', 13: 'ok', 27: 'back', 8: 'back', 10009: 'back', 461: 'back' };
   var FULL = 'Home holds nine apps. Remove one first.', LAST = 'Home needs one app';
 
@@ -293,7 +293,8 @@
   function listPlateWidth(id, compact) {
     if (S.c.apps === 'icons') return compact ? 120 : 144;
     var text = S.c.apps === 'text';
-    if (!compact && S.c.focus === 'glass') return clamp(Math.ceil(28 + (photoLabel(id, compact).width + (text ? 28 : 100)) * 1.06 + 30), text ? 240 : 300, text ? 1076 : 1176);
+        // Glass hugs the name as it grows 6% from the icon/text origin at x=28, with even 28-30px ends.
+    if (!compact && S.c.focus === 'glass') return Math.max(text ? 240 : 300, Math.ceil(28 + (photoLabel(id, compact).width + (text ? 0 : 100)) * PH_GROW + 30));
     return clamp(Math.ceil(photoLabel(id, compact).width + (text ? 84 : compact ? 156 : 184)), text ? 280 : 360, text ? compact ? 724 : 1076 : compact ? 796 : 1176);
   }
 
@@ -571,26 +572,14 @@
       this.key(t, 'ok');
     }
   };
-  /* List Home moves sideways by screen position: Right picks the Apps/Settings
-     control level with the focused row, Left the visible row level with the control. */
-  function centreY(el) { var r = el && el.getBoundingClientRect(); return r && r.height ? r.top + r.height / 2 : null; }
+  /* Right from a list row picks the Apps/Settings control level with it on screen.
+     Rows come from the layout model (never mid-scroll); the controls do not move. */
   function nearestUtil(row, U) {
-    var y = centreY(document.querySelector('#phRows .ph-row[data-i="' + row + '"]')), best = clamp(S.lastUtil, 0, U.length - 1), gap = Infinity;
-    if (y === null) return best;
-    Array.prototype.forEach.call(document.querySelectorAll('#utils .u[data-z="util"]'), function (b) {
-      var d = Math.abs(centreY(b) - y), n = Number(b.getAttribute('data-i'));
-      if (n < U.length && d < gap) { gap = d; best = n; }
-    });
-    return best;
-  }
-  function nearestRow(u, row, n) {
-    var y = centreY(document.querySelector('#utils .u[data-z="util"][data-i="' + u + '"]')), best = row, gap = Infinity, list = document.getElementById('phList').getBoundingClientRect();
-    if (y === null) return row;
-    Array.prototype.forEach.call(document.querySelectorAll('#phRows .ph-row'), function (el) {
-      var c = centreY(el), i = Number(el.getAttribute('data-i')), d;
-      if (c === null || i >= n || c < list.top + 48 || c > list.bottom - 48) return; // Only rows actually on screen.
-      d = Math.abs(c - y);
-      if (d < gap) { gap = d; best = i; }
+    var sr = sceneEl.getBoundingClientRect(), scale = sr.width / 1920 || 1, y = PH_TOP + (row - scroll.photo) * PH_PITCH + PH_PITCH / 2;
+    var best = clamp(S.lastUtil, 0, U.length - 1), gap = Infinity;
+    Array.prototype.forEach.call(utilsEl.querySelectorAll('.u[data-z="util"]'), function (b) {
+      var r = b.getBoundingClientRect(), n = Number(b.getAttribute('data-i')), d = Math.abs((r.top + r.height / 2 - sr.top) / scale - y);
+      if (r.height && n < U.length && d < gap) { gap = d; best = n; }
     });
     return best;
   }
@@ -600,8 +589,7 @@
       f.u = clamp(f.u, 0, U.length - 1);
       if (k === 'up' && f.u > 0) f.u--;
       else if (k === 'down' && f.u < U.length - 1) f.u++;
-      else if (k === 'back') f.zone = 'apps';
-      else if (k === 'left') { f.zone = 'apps'; if (h.length) setSel(h[nearestRow(f.u, i, h.length)]); }
+      else if (k === 'left' || k === 'back') f.zone = 'apps'; // Back to the app you came from.
       else if (k === 'ok') { S.lastUtil = f.u; utilAction(U[f.u]); return; }
       S.lastUtil = f.u;
       return;
@@ -925,7 +913,7 @@
 
   function render() {
     var t = top(), sheet = !!V[t.id].sheet, art = S.c.bg === 'photo';
-    stage.className = 'stage bg-' + S.c.bg + ' l-' + S.c.layout + ' v-' + S.variant + ' m-none f-' + S.c.focus + ' a-' + S.c.apps + ' u-' + S.c.controls + ' g-' + S.geom + ' tone-dark tr-light br-light at-' + t.id + ' font-' + homeFont() + (homeFont() !== 'manrope' ? ' font-custom' : '') + (S.fontSwitch ? ' is-font-switch' : '') + (art ? ' source-art' : '') + (sheet ? ' is-sheet' : '') + (S.reflow ? ' is-reflow' : '');
+    stage.className = 'stage bg-' + S.c.bg + ' l-' + S.c.layout + ' v-' + S.variant + ' m-none f-' + S.c.focus + ' a-' + S.c.apps + ' u-' + S.c.controls + ' g-' + S.geom + ' tone-dark tr-light br-light at-' + t.id + ' font-' + homeFont() + (homeFont() !== 'manrope' ? ' font-custom' : '') + (S.fontSwitch ? ' is-font-switch' : '') + (art ? ' source-art' : '') + (sheet ? ' is-sheet' : '') + (S.reflow ? ' is-reflow' : '') + (S.rapid ? ' is-rapid' : '');
     applyHomeFont();
     if (!sheet) renderHome(t);
     renderSheet(t, sheet);
@@ -1185,7 +1173,8 @@
     photoMode = compact;
   }
   /* Each plate keeps a stationary, stage-registered field while its opacity changes.
-     Reuse the hidden group for the next label; never animate plate width or position. */
+     Reuse the hidden group for the next label; never animate plate width or position.
+     Only its transform scale springs (94% to 100% from its own edge); left/top place it. */
   function renderPhotoPlate(id, width, height, y, state) {
     var key = id + '|' + width + '|' + height + '|' + y, plateEl, fieldEl;
     if (key !== photoPlateKey) {
@@ -1238,7 +1227,7 @@
         markImage.onerror = function () { this.style.visibility = 'hidden'; };
         if (markImage.complete && !markImage.naturalWidth) markImage.style.visibility = 'hidden';
       }
-      row.className = 'ph-row k-' + it.kind + (focus ? ' is-focus' : '') + (remembered && i === anchor ? ' is-sel' : '') + (lifted ? ' is-lifted' : '')
+      row.className = 'ph-row k-' + it.kind + (focus ? ' is-focus' : '') + (remembered && i === anchor ? ' is-sel' : '') + (hs.zone === 'preview' && i === anchor ? ' is-preview' : '') + (lifted ? ' is-lifted' : '')
         + (lifted && i === 0 ? ' no-up' : '') + (lifted && i === n - 1 ? ' no-down' : '')
         + (it.kind === 'app' && S.press === it.id ? ' is-press' : '');
       row.style.width = (compact ? listPlateWidth(it.id, compact) : 1200) + 'px'; row.style.height = pitch + 'px';
@@ -1248,8 +1237,9 @@
     });
     phRows.style.transform = 'translate3d(0,' + (-off) + 'px,0)';
     y = (compact ? PH_COMPACT_TOP + 2 : PH_TOP + 1) + slot * pitch;
-    // One focus at a time: the list keeps its position but shows no plate while Apps/Settings has focus.
-    plateState = !n || hs.zone === null ? '' : hs.lifted ? 'on-lift' : S.c.focus === 'glass' && rowFocus ? 'on-focus' : '';
+    // One focus at a time: no plate while Home controls have focus. The Settings preview keeps a
+    // half plate so the Focus choice is visible.
+    plateState = !n || hs.zone === null ? '' : hs.lifted ? 'on-lift' : S.c.focus === 'glass' && rowFocus ? 'on-focus' : S.c.focus === 'glass' && hs.zone === 'preview' ? 'on-sel' : '';
     renderPhotoPlate(items[anchor] ? items[anchor].id : '', width, compact ? 88 : PH_PLATE_H, compact ? y : y + (PH_PITCH - PH_PLATE_H) / 2 - 1, plateState);
     if (compact && !hs.lifted && (hs.zone === 'tiles' || hs.zone === 'act') && items[anchor]) {
       s = hs.arr.slots[anchor]; label = (s.removed ? 'Restore ' : 'Remove ') + app(s.id).name; aw = actionWidth(label);
@@ -1703,14 +1693,14 @@
     if (!k || ev.metaKey || ev.ctrlKey || ev.altKey) return;
     ev.preventDefault();
     if (k === 'ok' || k === 'back') { if (ev.repeat || heldKeys[code]) return; heldKeys[code] = true; }
-    else if (ARROWS[k]) { holdArrow(code, k); if (ev.repeat || heldKeys[code]) return; heldKeys[code] = true; rapidMove(); }
-    else rapidMove();
+    else { holdArrow(code, k); if (ev.repeat || heldKeys[code]) return; heldKeys[code] = true; rapidMove(); } // KEYS maps only arrows besides OK/Back.
     press(k);
   });
   /* A held arrow repeats sooner and steadier than the TV's own auto-repeat:
      first repeat after HOLD_DELAY, then every HOLD_RATE. The TV's repeat events
-     only prove the key is still down; if they stop (a lost keyup), so does this. */
-  var ARROWS = { up: 1, down: 1, left: 1, right: 1 }, HOLD_DELAY = 280, HOLD_RATE = 110, HOLD_SILENCE = 1200, hold = null;
+     only prove the key is still down; if they stop (a lost keyup), so does this.
+     One arrow repeats at a time: pressing another takes over until the TV repeats the first again. */
+  var HOLD_DELAY = 280, HOLD_RATE = 110, HOLD_SILENCE = 1200, hold = null;
   function holdArrow(code, k) {
     var now = Date.now();
     if (hold && hold.code === code) { hold.seen = now; return; }
@@ -1727,11 +1717,11 @@
      the spring returns once movement pauses. Class only: no layout or re-render. */
   var lastMoveAt = 0, rapidTimer = null;
   function rapidMove() {
-    var now = Date.now(), root = document.documentElement;
-    if (now - lastMoveAt < 360) root.className = root.className.indexOf('is-rapid') < 0 ? (root.className + ' is-rapid').replace(/^ /, '') : root.className;
-    lastMoveAt = now; clearTimeout(rapidTimer);
-    rapidTimer = setTimeout(function () { root.className = root.className.replace(/ ?is-rapid/, ''); }, 380);
+    var now = Date.now();
+    S.rapid = now - lastMoveAt < 360; lastMoveAt = now; clearTimeout(rapidTimer);
+    if (S.rapid) rapidTimer = setTimeout(function () { S.rapid = false; stage.className = stage.className.replace(' is-rapid', ''); }, 380);
   }
+
   document.addEventListener('keyup', function (ev) { delete heldKeys[ev.keyCode]; if (hold && hold.code === ev.keyCode) stopHold(); });
   window.addEventListener('blur', function () { heldKeys = {}; stopHold(); });
   window.addEventListener('focus', function () { FrameDevice.cancelSource(); release(); refreshInputsOnReturn(); focusStage(); after(); updateClock(); refreshArt(); });
@@ -1774,6 +1764,7 @@
   QA.ready = function () { return fontsReady && !S.pending && !!S.shown && S.shown.bg === S.c.bg && S.shown.wall === S.c.wall && S.shown.font === S.c.font; };
   QA.nav = function () { var keys = arguments.length === 1 && Array.isArray(arguments[0]) ? arguments[0] : Array.prototype.slice.call(arguments); keys.forEach(function (key) { if (!NAV[key]) throw new Error('Unknown key'); press(NAV[key]); }); return QA.state(); };
   QA.look = function (patch) { setLook(patch, {}); return QA.state(); };
+  QA.holding = function () { return !!hold; };
   QA.scene = function (name) { if (['home', 'apps', 'settings', 'appearance', 'editor'].indexOf(name) < 0) throw new Error('Unknown view'); goScene(name); return QA.state(); };
   QA.activate = function (action) { return activate(action) ? QA.state() : null; };
   QA.actions = function () { var view = isSettingsDetail(top()) ? appearanceEl : sheetEl.hidden ? homeEl : sheetEl; return Array.prototype.filter.call(view.querySelectorAll('[data-action]'), renderedAction).map(function (el) { return el.getAttribute('data-action'); }); };
