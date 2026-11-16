@@ -91,7 +91,7 @@
     shown: null, pending: null, lookError: null, bundleKey: null, reflow: false
   };
   var scroll = { first: 0, off: 0, photo: 0 };
-  var homeSources = { active: false, ports: {}, request: 0, stop: null };
+  var homeSources = { active: false, loaded: false, ports: {}, request: 0, stop: null };
   function pick(v, list, fallback) {
     v = String(v || '').toLowerCase();
     for (var i = 0; i < list.length; i++) if (list[i].toLowerCase() === v) return list[i];
@@ -123,7 +123,7 @@
     homeSources.active = true; token = ++homeSources.request;
     function accept(err, inputs) {
       if (token !== homeSources.request || !homeSources.active || document.hidden || top().id !== 'home') return;
-      var ports = {};
+      var ports = {}; homeSources.loaded = true;
       if (!err) inputs.forEach(function (input) { if (input.connected) ports[input.number] = true; });
       if (JSON.stringify(ports) !== JSON.stringify(homeSources.ports)) { homeSources.ports = ports; ensureSel(); render(); }
     }
@@ -310,6 +310,8 @@
     var h = visibleHome(), i;
     if (!h.length) { S.sel = null; return -1; }
     i = h.indexOf(S.sel);
+    // An HDMI entry hidden only because the inputs have not been reported yet keeps its selection.
+    if (i < 0 && !homeSources.loaded && hdmiPort(S.sel) && onHome(S.sel)) return clamp(S.selIdx, 0, h.length - 1);
     if (i < 0) { i = clamp(S.selIdx, 0, h.length - 1); S.sel = h[i]; }
     S.selIdx = i;
     return i;
@@ -437,6 +439,7 @@
     }
     try {
       xhr.open('POST', window.FrameArt.bridge() + '/lights', true); xhr.timeout = 6000;
+      window.FrameArt.authorize(xhr);
       xhr.onload = function () { finish(xhr.status === 204 || xhr.status === 429); }; // 429: the press just before already went through.
       xhr.onerror = xhr.ontimeout = function () { finish(false); };
       xhr.send('');
@@ -721,6 +724,7 @@
   function detailOk(t, item) {
     var patch = {}, error = S.lookError;
     if (item.action === 'settings.back') { detailBack(); return; }
+    if (S.pending && S.pending.background) cancelLook(); // The photo refresh retries on the next return Home.
     if (S.pending) return;
     if (item.action === 'settings.retry') {
       if (error && error.patch[error.row] !== undefined) detailFocus(t, choice(error.row, error.patch[error.row]), 0);
@@ -767,7 +771,14 @@
       var n = CONTROLS.cameras.length;
       if (k === 'back') { if (t.full) { t.full = false; stopFull(); } else { stopCameras(); pop(); } return; }
       if (k === 'ok') { t.full = !t.full; if (t.full) startFull(t); else stopFull(); return; }
-      if (t.full) { t.f.i = k === 'left' || k === 'up' ? (t.f.i + n - 1) % n : (t.f.i + 1) % n; startFull(t); return; }
+      if (t.full) {
+        // Stepping shows the next camera's MJPEG at once; the TV player starts only once the
+        // choice settles, so holding an arrow never opens and closes the player per step.
+        t.f.i = k === 'left' || k === 'up' ? (t.f.i + n - 1) % n : (t.f.i + 1) % n;
+        stopFull(); clearTimeout(full.settle);
+        full.settle = setTimeout(function () { if (top() === t && t.full) startFull(t); }, 350);
+        return;
+      }
       t.f.i = cameraMove(t, k);
     },
     point: function (t, z, i) { if (z === 'cam') { t.f.i = i; this.key(t, 'ok'); } }
@@ -795,7 +806,7 @@
     else if (!on && was && top().id === 'cameras') render();
   }
   function stopFull() {
-    full.token++;
+    full.token++; clearTimeout(full.settle);
     if (avplay()) { try { avplay().stop(); } catch (e) { /* Not playing. */ } try { avplay().close(); } catch (e) { /* Not open. */ } }
     setFullClass(false);
   }
@@ -892,7 +903,14 @@
       list.forEach(function (item, k) { orders(list.slice(0, k).concat(list.slice(k + 1))).forEach(function (o) { out.push([item].concat(o)); }); });
       return out;
     }
-    var items = ratios.map(function (r, i) { return { i: i, r: r }; }), all = orders(items); // At most six cameras (720 orders), searched once per shape set.
+    var items = ratios.map(function (r, i) { return { i: i, r: r }; }), seen = {}, all = (items.length <= 5 ? orders(items) : items.map(function (hero) {
+      // Six cameras: each one may lead, the rest keep their order (720 full orders is too slow on a TV).
+      return [hero].concat(items.filter(function (x) { return x !== hero; }));
+    })).filter(function (o) {
+      // Cameras with the same shape are interchangeable: try each distinct shape sequence once.
+      var k = o.map(function (x) { return x.r.toFixed(3); }).join(',');
+      if (seen[k]) return false; seen[k] = true; return true;
+    });
     all.forEach(function (o) {
       var k;
       consider(row(o, B.x, B.y, B.w, B.h));
@@ -987,7 +1005,8 @@
   }
   /* Weather beside the clock, from Open-Meteo (no account or key). Location comes from
      cleanframe.weather.v1 = { lat, lon, unit: 'f' | 'c' }; without it the option is not offered.
-     Fetched at most every 20 minutes while the clock shows weather; the last reading is kept. */
+     Fetched at most every 20 minutes while the clock shows weather, only from the minute clock
+     tick or a settings change, never from a key press; the last reading is kept. */
   var WEATHER = (function () {
     var w = null;
     try { w = JSON.parse(localStorage.getItem('cleanframe.weather.v1')); } catch (e) { w = null; }
@@ -1020,7 +1039,6 @@
     } catch (e) { weatherBusy = false; }
   }
   function weatherHtml() {
-    refreshWeather();
     // A reading older than three hours (or with no time) is not shown: stale weather misleads.
     if (!WEATHER || !weatherNow || typeof weatherNow.temp !== 'number' || !SVG['wx-' + weatherNow.kind] || !(Date.now() - weatherNow.at < 3 * 3600000)) return '';
     var kind = weatherNow.kind === 'clear' && !weatherNow.day ? 'night' : weatherNow.kind;
@@ -1281,7 +1299,7 @@
     var error = S.lookError, status = '';
     function command(item, inner, cls) {
       var applied = item.axis && S.c[item.axis] === item.value;
-      var loading = !!(item.axis && S.pending && S.pending.target[item.axis] === item.value && S.pending.row === item.axis);
+      var loading = !!(item.axis && S.pending && !S.pending.background && S.pending.target[item.axis] === item.value && S.pending.row === item.axis);
       return '<button type="button" tabindex="-1" class="setting-choice' + (cls ? ' ' + cls : '') + (t.f.action === item.action ? ' is-focus' : '') + (applied ? ' is-applied' : '') + (loading ? ' is-loading' : '') + '"'
         + (item.axis ? ' role="radio" aria-checked="' + !!applied + '"' : '') + ' aria-label="' + esc(item.axis && item.value === 'both' ? 'Icons and text' : item.label) + '" aria-busy="' + loading + '"'
         + ' data-z="detail" data-i="0" data-id="' + item.action + '" data-action="' + item.action + '">' + inner
@@ -1296,7 +1314,7 @@
           return command(item, '<span class="setting-copy"><span class="setting-name">' + esc(item.label) + '</span></span>', '');
         }).join('') + '</div></section>';
     }).join(''));
-    if (S.pending) status = '<p>Loading your choice…</p><p>Back cancels this change.</p>';
+    if (S.pending && !S.pending.background) status = '<p>Loading your choice…</p><p>Back cancels this change.</p>';
     else if (error) {
       status = '<p class="setting-error">' + (error.type === 'save' ? 'Couldn’t save this change.' : error.patch.bg === 'photo' ? 'Art Mode is unavailable. Start the local Art bridge, then try again.' : 'Couldn’t load this appearance.') + ' Your current choice is kept.</p>'
         + command({ action: 'settings.retry', label: 'Try again' }, '<span>Try again</span>', 'setting-retry');
@@ -1307,8 +1325,11 @@
      shares its position without changing the control's identity or key behaviour. */
   function renderFocusStatus(t) {
     if (isSettingsDetail(t)) { focusStatus.className = 'focus-status'; return; }
-    var root = sheetEl.hidden ? homeEl : sheetEl, active = root.querySelectorAll('.is-focus[data-action]'), target = null, text = S.err ? 'Not saved. OK tries again.' : '', i, r, sr, scale, x, y, w, solid, photoFree;
+    var root, active, target = null, text = S.err ? 'Not saved. OK tries again.' : '', i, r, sr, scale, x, y, w, solid, photoFree;
     Array.prototype.forEach.call(stage.querySelectorAll('.has-local-status'), function (el) { el.className = el.className.replace(/\s+has-local-status/g, ''); });
+    // No message: skip the focus query and layout reads entirely (the common case on every key).
+    if (!text) { focusStatus.className = 'focus-status'; return; }
+    root = sheetEl.hidden ? homeEl : sheetEl; active = root.querySelectorAll('.is-focus[data-action]');
     for (i = 0; i < active.length; i++) if (renderedAction(active[i])) { target = active[i]; break; }
     if (!target || !text) { focusStatus.className = 'focus-status'; return; }
     if (target.parentNode === utilsEl && utilsEl.className.indexOf('is-icons') >= 0) { renderUtilFocusLabel(target); focusStatus.className = 'focus-status'; return; }
@@ -1457,7 +1478,11 @@
       var tiles = cameraLayout(cameraRatios(t));
       Array.prototype.forEach.call(el.grid.querySelectorAll('.cam'), function (b, i) {
         var box = t.full ? fullBox(t.ratios[i] || 16 / 9) : tiles[i], im = b.querySelector('img');
-        if (!im.getAttribute('src') && document.documentElement.className.indexOf('is-avplay') < 0) {
+        // Streams run only where seen: every tile in the grid, only the chosen one in full screen,
+        // and none while the TV player shows it.
+        var wanted = document.documentElement.className.indexOf('is-avplay') < 0 && (!t.full || i === t.f.i);
+        if (!wanted && im.getAttribute('src')) { im.onload = null; im.removeAttribute('src'); }
+        if (wanted && !im.getAttribute('src')) {
           // First paint of this view starts the stream; its first frame reports the real shape.
           im.onload = function () { if (im.naturalWidth && im.naturalHeight && !t.ratios[i]) { t.ratios[i] = im.naturalWidth / im.naturalHeight; if (top() === t) render(); } };
           im.src = cameraURL(CONTROLS.cameras[i]);
@@ -1591,6 +1616,7 @@
       if (bundle) committedBundle = bundle;
       S.lookError = null;
       render();
+      refreshWeather();
       if (opts.startup) refreshArt();
       if (reflow) window.requestAnimationFrame(function () { window.requestAnimationFrame(function () {
         if (frame !== reflowToken) return;
@@ -1605,7 +1631,8 @@
     needs = S.bundleKey !== bundleKey();
     imageDone = !needs;
     if (!needs) { finish(null); return; }
-    S.pending = { patch: changes, target: target, row: opts.row || S.appearanceFocus };
+    // A background photo refresh is not the user's choice: it never labels or blocks a Visual row.
+    S.pending = { patch: changes, target: target, row: opts.row || S.appearanceFocus, background: !!(opts.transient && !opts.row) };
     if (needs) loadBundle(token, function (bundle) {
       if (!bundle) {
         if (token !== lookToken || failed) return;
@@ -1641,6 +1668,7 @@
   function updateClock() {
     clearTimeout(clockTimer);
     if (document.hidden) return;
+    refreshWeather();
     if (top().id === 'home' || isSettingsDetail(top())) renderCaption(top(), homeState(top()));
     clockTimer = setTimeout(updateClock, 60000 - (Date.now() % 60000) + 30);
   }

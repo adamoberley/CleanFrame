@@ -18,6 +18,12 @@
     if (parts.some(function (n) { return n > 255; })) return '127.0.0.1';
     return h === '127.0.0.1' || parts[0] === 10 || parts[0] === 192 && parts[1] === 168 || parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31 ? h : '127.0.0.1';
   }
+  // The bridge's per-install key (cleanframe.art.key), sent on every request when set.
+  function authorize(xhr) {
+    var k = null;
+    try { k = localStorage.getItem('cleanframe.art.key'); } catch (e) { k = null; }
+    if (k && /^[A-Za-z0-9_-]{24,128}$/.test(k)) xhr.setRequestHeader('X-CleanFrame-Key', k);
+  }
   function port() {
     var p;
     try { p = localStorage.getItem(PORT_KEY) || '8643'; } catch (e) { p = '8643'; }
@@ -158,6 +164,7 @@
     }
     try {
       xhr.open('GET', url, true); xhr.timeout = binary ? 8000 : 3500;
+      authorize(xhr);
       if (binary) xhr.responseType = 'arraybuffer';
       xhr.onload = function () {
         if (xhr.status !== 200) { finish(null); return; }
@@ -185,7 +192,7 @@
     } catch (e) { done(); }
   }
   function persist(m, bytes, blob, url, g, complete) {
-    var ended = false, timer = setTimeout(function () { done(record(m, url)); }, 2500);
+    var ended = false, timer = setTimeout(function () { done(record(m, url)); }, 6000);
     function done(value) { if (ended) return; ended = true; clearTimeout(timer); complete(value); }
     if (fsDir) {
       var tmp, stream, data = new window.Uint8Array(bytes), i, part, tempName = 'incoming-' + g + '-' + (++copyNo) + '.tmp';
@@ -198,12 +205,18 @@
           tmp = fsDir.createFile(tempName);
           tmp.openStream('w', function (s) {
             stream = s;
-            try {
-              if (ended || g !== epoch) { stream.close(); done(null); return; }
-              for (i = 0; i < data.length; i += 65536) { part = Array.prototype.slice.call(data.subarray(i, i + 65536)); stream.writeBytes(part); }
-              stream.close(); stream = null;
-              fsDir.moveTo(tmp.fullPath, fsDir.fullPath + '/' + m.revision + '.jpg', true, promote, function () { done(record(m, url)); });
-            } catch (e) { if (stream) { try { stream.close(); } catch (ignoreClose) { /* Best effort. */ } } done(record(m, url)); }
+            i = 0;
+            // Write in 256 KiB steps, yielding between them so Home stays responsive while a new
+            // photo (up to 12 MiB) is saved.
+            (function step() {
+              try {
+                if (ended || g !== epoch) { stream.close(); done(null); return; }
+                part = Array.prototype.slice.call(data.subarray(i, i + 262144)); stream.writeBytes(part); i += 262144;
+                if (i < data.length) { setTimeout(step, 0); return; }
+                stream.close(); stream = null;
+                fsDir.moveTo(tmp.fullPath, fsDir.fullPath + '/' + m.revision + '.jpg', true, promote, function () { done(record(m, url)); });
+              } catch (e) { if (stream) { try { stream.close(); } catch (ignoreClose) { /* Best effort. */ } } done(record(m, url)); }
+            }());
           }, function () { done(record(m, url)); });
         } catch (e) { done(record(m, url)); }
       });
@@ -259,7 +272,7 @@
   window.FrameArt = { load: load, refresh: refresh, cancel: cancel, current: function () { return current; },
     status: function () { return { available: !!current, refreshing: refreshing, error: error }; },
     look: function () { return { settings: look, style: lookStyle(look) }; }, lookFor: lookStyle,
-    bridge: function () { return 'http://' + host() + ':' + port(); },
+    bridge: function () { return 'http://' + host() + ':' + port(); }, authorize: authorize,
     // Bound blob lifetimes once a new atomic bundle replaces every previous image.
     retain: function (url) { retainedURL = url; urls = urls.filter(function (item) { if (item === url || current && item === current.url) return true; window.URL.revokeObjectURL(item); return false; }); }
   };

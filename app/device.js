@@ -153,10 +153,6 @@
     try { api().launch(id, function () { finish(null); }, function (err) { finish(failure(err)); }); }
     catch (err) { finish(failure(err)); }
   }
-  function launch(brand, done) {
-    if (!IDS[brand]) { done({message: 'This app has no launch target.'}); return; }
-    launchApp(IDS[brand], done);
-  }
   function home(done) { launchApp('com.samsung.tv.csfs', done); }
   function apps(done) {
     if (!api()) { unavailable(done); return; }
@@ -180,5 +176,5 @@
       }, function (err) { finish(failure(err)); });
     } catch (err) { finish(failure(err)); }
   }
-  window.FrameDevice = { launch: launch, launchApp: launchApp, liveTV: liveTV, home: home, apps: apps, sources: sources, watchSources: watchSources, setSource: setSource, cancelSource: cancelSource };
+  window.FrameDevice = { launchApp: launchApp, liveTV: liveTV, home: home, apps: apps, sources: sources, watchSources: watchSources, setSource: setSource, cancelSource: cancelSource };
 }());
