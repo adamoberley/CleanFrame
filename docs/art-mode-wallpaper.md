@@ -1,8 +1,8 @@
 # Art Mode wallpaper sync (personal fork)
 
-Settings → Background → **Art Mode** uses the current unfiltered uploaded Art Mode JPEG as CleanFrame's Home background. This is the personal fork's default photo source. Light and Dark remain available. The bundled gallery and derived material JPEGs have been removed to save space; a tiny inline neutral background handles startup without a cache. This feature does not change native Art Mode's selection, launch it, install anything or alter native Home/startup assignments.
+CleanFrame's Home background is always the current unfiltered uploaded Art Mode JPEG. A tiny inline neutral background handles startup without a cache. This feature does not change native Art Mode's selection, launch it, install anything or alter native Home/startup assignments.
 
-The local Vetro shard needs neither Home Assistant nor an admin/session token. It defaults to loopback. TVs that block loopback can use their own interface address; connections from other LAN devices are refused. Light/Dark backgrounds remain fully offline.
+The local Vetro shard needs neither Home Assistant nor an admin/session token. It defaults to loopback. TVs that block loopback can use their own interface address; connections from other LAN devices are refused.
 
 ## Evidence and limits
 
@@ -93,7 +93,7 @@ The shard assumes the target's `head`, `base64`, `readlink -f`, `chmod` and `cho
 
 ## Widget cache and refresh
 
-`look.source` is `art` inside the existing `cleanframe.home.v1` preferences. Old Gallery/Photo preferences migrate to Art Mode; Light and Dark are preserved. The old safe wallpaper/mode fields and Home-order keys remain intact without loading gallery files or running rotation. Selecting Art Mode from a flat background without a cached image requires a successful bounded fetch and decoded complete bundle before a preference write. Back or another appearance choice cancels pending work; late responses cannot apply a cancelled choice. A preference-write failure keeps the previous appearance and offers Retry.
+`look.source` is `art` inside the existing `cleanframe.home.v1` preferences. Old Gallery, Photo, Light and Dark preferences load as Art Mode; Home-order keys remain intact and retired wallpaper/mode fields are dropped. A new photo is installed only as a decoded, complete bundle. Back or another appearance choice cancels pending work; late responses cannot apply a cancelled choice. A preference-write failure keeps the previous appearance and offers Retry.
 
 On Tizen, the app prefers `wgt-private/cleanframe-art/` through `tizen.filesystem`, never shared storage. A completed temporary JPEG is moved to its revision filename before the small `cleanframe.art.cache.v1` localStorage pointer advances. Unique temporary names prevent a cancelled write from consuming a newer copy. Cleanup preserves the pointer, current cache and installed image and removes owned obsolete revisions/temps on subsequent saves. At most three distinct revision JPEGs plus a temporary file can be relevant during a failed/cancelled appearance; steady success retains at most the previous and current cache. Storage failures keep the old persistent pointer and allow the decoded image in memory for that session.
 
@@ -105,6 +105,6 @@ The widget manifest includes internet plus filesystem read/write privileges and 
 
 ## Verification handoff
 
-Offline checks are `npm run check`, `npm run check:art`, `npm run check:tools`, and `CLEANFRAME_PUBLIC_FONTS=1 npm run check:browser`. The latter runs both the existing UI regression suite and Art-specific browser/cache tests. Public-font screenshots use a bundled synthetic photo under ignored `.local/qa/art-*-public.png`. No owner's photo or diagnostic dump is included. `npm run pack:art` prepares the local shard; public unsigned widget preparation uses the existing `check:public` / `export:public` flow.
+Offline checks are `npm run check`, `npm run check:art`, `npm run check:tools`, and `npm run check:browser`. The latter runs both the existing UI regression suite and Art-specific browser/cache tests. Screenshots use a bundled synthetic photo under ignored `.local/qa/art-*-public.png`. No owner's photo or diagnostic dump is included. `npm run pack:art` prepares the local shard; public unsigned widget preparation uses the existing `check:public` / `export:public` flow.
 
 Vetro import/start, root copy utilities, packaged-widget interface-address access and app-private file creation were exercised on the owner's TV. Still verify Node 4.4 independently if targeting an older runtime; private-file persistence across app/TV restart; the image against the owner's current uploaded Art photo; Home/Art visibility events and change latency; List/Dock readability and remote feel; stopped/missing bridge fallback; and cancellation under actual TV timing. Signing/install, launch and physical observation remain with the parent/owner. Native Home/startup writes are a separate task and are not part of this feature.

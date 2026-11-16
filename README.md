@@ -2,7 +2,7 @@
 
 A quieter home screen for Samsung The Frame. Your apps, a photograph and the time, with an interface made for the TV remote.
 
-![CleanFrame browser preview using the bundled Manrope font](docs/images/cleanframe-dock.jpg)
+![CleanFrame browser preview](docs/images/cleanframe-dock.jpg)
 
 I built CleanFrame for one TV: my own Samsung The Frame, running Tizen. I'm sharing the code and setup notes as a starting point for other people to build on.
 
@@ -18,23 +18,19 @@ You need Node.js 22.13+ (22 LTS), or 24+, and Python 3.10+ to run the browser pr
 git clone https://github.com/nthnclrk/CleanFrame.git
 cd CleanFrame
 npm ci
-npm run dev:public
+npm run dev
 ```
 
 Open [localhost:4795/home/](http://localhost:4795/home/). Use the arrow keys, Enter and Escape, or click the controls. App launches and Samsung screens require a TV; the preview reports that limitation when you select them.
 
-The public preview uses the included Manrope, Geist and Newsreader fonts.
-
 ## What you can change
 
-- Choose a List or Dock layout, with icons, names or both.
-- Use a photograph, light or dark background, with a simple 12-hour clock.
-- Adjust typography, layout and Type/Glass focus through the same Settings interface.
-- Choose and reorder Home apps; discover installed apps on the TV.
-- Use the current uploaded Art Mode photo, Light or Dark, and save preferences locally.
-- Open Settings → Samsung → Inputs to choose a discovered HDMI source.
+- Choose a List or Dock layout, with icons, names or both, and Glass or Text focus.
+- Show the current uploaded Art Mode photo behind Home, with a 12-hour clock and optional weather.
+- Choose and reorder Home apps; discover installed apps on the TV; show HDMI inputs when connected or always.
+- Save preferences locally. Inter is the only typeface.
 
-Art photos use a fixed readable scrim and neutral surfaces. The TV uses transforms and opacity for focus feedback, without live blur or pixel analysis.
+Art photos use outlined text and frosted surfaces. The TV uses transforms and opacity for focus feedback, without live blur or pixel analysis.
 
 ## Use a coding agent
 
@@ -42,7 +38,7 @@ Open this repo in a local coding agent and give it a bounded change:
 
 ```text
 Read AGENTS.md, docs/development.md and docs/interaction-behaviour.md.
-Help me adapt CleanFrame. Start with the public-font browser preview.
+Help me adapt CleanFrame. Start with the browser preview.
 My first change is: <describe one change>.
 Preserve remote navigation, saved preferences and the ES5 runtime.
 Run the source checks and relevant browser checks. Show the result.
@@ -56,7 +52,7 @@ See [working with an agent](docs/for-agents.md) for the TV setup prompt and the 
 
 Use the staged [Samsung The Frame setup guide](docs/agent-tv-setup-guide.md) to understand the process used on my TV and adapt it to yours. It covers the remote's Developer Mode sequence, official Samsung tools, your own certificates and app identity, installation, visible checks and recovery.
 
-The [latest release](https://github.com/nthnclrk/CleanFrame/releases/latest) includes an unsigned, public-font widget for inspection and adaptation. For your installation, build from source using your own identity in `.local/signing.json` and sign with your own certificates. The download is not a ready-to-install signed package.
+The [latest release](https://github.com/nthnclrk/CleanFrame/releases/latest) includes an unsigned public widget for inspection and adaptation. For your installation, build from source using your own identity in `.local/signing.json` and sign with your own certificates. The download is not a ready-to-install signed package.
 
 Signing supports an ignored `.local/signing.json` based on `signing.example.json`: select your SDK, existing certificate profile and your own SDK-generated app identity. See [local signing setup](docs/development.md#local-tv-tools-and-signing). The TV installation commands and native Home helper still contain reference-machine assumptions. Your agent must check the installed-app IDs and each device stage with you. Installing the app and assigning the remote Home button are separate steps.
 
@@ -78,20 +74,20 @@ The detailed [device record](docs/tv-status.md) separates observed results from 
 npm run check
 npm run check:tools
 npx playwright install chromium
-CLEANFRAME_PUBLIC_FONTS=1 npm run check:browser
+npm run check:browser
 npm run check:public
 npm run export:public
 ```
 
-`npm run check`, including its `check:device` command, runs only source checks and synthetic device-adapter tests. It never connects to a TV. The browser checks use isolated Chromium profiles and a loopback preview. They never contact a TV. The public export creates `dist/CleanFrame-public-unsigned.wgt`, with public fonts and notices. It needs your own identity and signing before installation. It does not certify asset redistribution rights or device compatibility.
+`npm run check`, including its `check:device` command, runs only source checks and synthetic device-adapter tests. It never connects to a TV. The browser checks use isolated Chromium profiles and a loopback preview. They never contact a TV. The public export creates `dist/CleanFrame-public-unsigned.wgt`, with notices. It needs your own identity and signing before installation. It does not certify asset redistribution rights or device compatibility.
 
 | Location | Purpose |
 | --- | --- |
 | `app/` | Current packaged UI and runtime assets |
-| `scripts/` | Preview, validation, asset generation and reference TV tools |
+| `scripts/` | Preview, validation, icon generation and reference TV tools |
 | [Development](docs/development.md) / [testing](docs/testing.md) | Runtime map, preferences, checks and device boundaries |
-| [Assets](docs/assets.md) / [third-party notices](THIRD_PARTY_NOTICES.md) | Rendering recipes, font separation and asset provenance |
-| [Asset sources](docs/asset-sources.md) | Photo credits and verification of the bundled third-party assets |
+| [Assets](docs/assets.md) / [third-party notices](THIRD_PARTY_NOTICES.md) | Art surfaces, icon generation and asset provenance |
+| [Asset sources](docs/asset-sources.md) | Font and icon sources |
 | `.local/`, `dist/` | Ignored private setup, recovery data, generated files and packages |
 
 ## Contribute
@@ -100,7 +96,7 @@ Fork it, experiment and build something that suits your TV. If you find a useful
 
 ## Licence and credits
 
-CleanFrame's original code and documentation use the [MIT licence](LICENSE). Fonts, photographs and logos retain their own terms; read [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Paid Pangram binaries are excluded from Git and public exports. A local package may include them, so keep personal builds separate from public downloads.
+CleanFrame's original code and documentation use the [MIT licence](LICENSE). The Inter font and logos retain their own terms; read [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 The [release review](docs/public-release.md) records the publication checks. Third-party assets retain the terms listed in their notices. CleanFrame is an independent project with no Samsung or streaming-service affiliation.
 
@@ -108,4 +104,4 @@ The [release review](docs/public-release.md) records the publication checks. Thi
 
 ### Art Mode backgrounds and Home defaults (personal fork)
 
-The local Vetro bridge caches the current unfiltered uploaded Art Mode photo for Home. This fork removes bundled wallpapers/materials and offers Art Mode, Light and Dark backgrounds. Fresh Home defaults include ESPN with a white PNG mark and antenna/cable Live TV with a TV symbol; ABC iview and SBS are no longer defaults. The installed app icon is a simple Home symbol. Saved Home lists remain intact. See [setup, cache behaviour and physical verification still needed](docs/art-mode-wallpaper.md); this integration has not yet been installed or visually verified on a TV. It does not change native Art Mode or Home/startup settings.
+The local Vetro bridge caches the current unfiltered uploaded Art Mode photo for Home. It is the only Home background; bundled wallpapers and Light/Dark backgrounds have been removed. Fresh Home defaults include ESPN with a white PNG mark and antenna/cable Live TV with a TV symbol; ABC iview and SBS are no longer defaults. The installed app icon is a simple Home symbol. Saved Home lists remain intact. See [setup, cache behaviour and physical verification still needed](docs/art-mode-wallpaper.md); this integration has not yet been installed or visually verified on a TV. It does not change native Art Mode or Home/startup settings.

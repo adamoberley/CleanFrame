@@ -6,7 +6,7 @@ The original publication record below was prepared 20 October 2026. For the curr
 
 That initial public source contained the 0.6.1 app, public-font screenshot, development tools, browser tests, setup notes and asset notices. Research folders, design studies, draft writing, unused Grid/optics code and obsolete generated images were removed after the owner's approval. Recoverable copies remain outside the public source.
 
-Paid Pangram fonts, signing keys, account tokens, local device addresses, recovery state and personal signed widgets remain in ignored local storage. Public preview and export use only Manrope, Geist and Newsreader. The public font check also verifies the expected font files and hashes.
+Signing keys, account tokens, local device addresses, recovery state and personal signed widgets remain in ignored local storage. The app now bundles only Inter; the public-source check verifies its hash and still rejects proprietary font files.
 
 ## Asset review
 
@@ -30,4 +30,4 @@ This route avoids relying on a force-push to erase earlier hosted objects. [GitH
 
 At the GitHub inventory check, the repository was private, with one main branch, no tags, no releases, no Actions runs and no Actions artifacts. Recheck that inventory before changing visibility. Verify the remote source and unauthenticated public view after the approved visibility change. The private backup must remain private.
 
-Keep public downloads to the unsigned public-font export with its notices. Personal signed packages can contain proprietary fonts. Reference-device installation results are recorded in [TV status](tv-status.md); the public-source review did not contact or change the TV.
+Keep public downloads to the unsigned export with its notices; personal signed packages are not public downloads. Reference-device installation results are recorded in [TV status](tv-status.md); the public-source review did not contact or change the TV.

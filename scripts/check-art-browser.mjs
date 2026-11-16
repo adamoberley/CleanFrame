@@ -120,5 +120,5 @@ try {
   check('List shows seven app names before the lower fade', rows.length === 9 && rows.slice(0, 7).every(r => r.top >= 96 && r.bottom <= 978) && rows[7].top > 976);
   await p.screenshot({ path: out + 'home-list-seven-public.png' });
   check('Art browser run has no uncaught page errors', pageErrors.length === 0);
-  console.log(checks.length + ' Art browser checks passed; public-font screenshots in .local/qa/');
+  console.log(checks.length + ' Art browser checks passed; screenshots in .local/qa/');
 } finally { if (p) await p.close(); if (preview) await preview.close(); }

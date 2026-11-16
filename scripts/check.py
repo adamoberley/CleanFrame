@@ -34,6 +34,6 @@ for css in app.rglob('*.css'):
         if ':' not in reference:
             assert (css.parent / reference.split('?')[0]).is_file(), 'Missing CSS resource: ' + reference
 assert (app / 'assets/icons/espn.png').is_file(), 'Missing white ESPN mark'
-for icon in ['stremio', 'netflix', 'disneyplus', 'youtube', 'appletv', 'primevideo', 'abciview', 'sbs', 'applemusic', 'art', 'apps', 'settings', 'livetv', 'home']:
+for icon in ['stremio', 'netflix', 'disneyplus', 'youtube', 'appletv', 'primevideo', 'abciview', 'sbs', 'applemusic', 'livetv', 'home']:
     assert (app / ('assets/icons/' + icon + '.svg')).is_file(), 'Missing icon: ' + icon
 print('Widget identity, version and bundled resources are valid.')
