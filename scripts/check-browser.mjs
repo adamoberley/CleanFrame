@@ -22,7 +22,6 @@ const CATALOG = IDS.map((id, i) => ({ id, name: NAMES[i], show: true, iconPath: 
 // All apps lists Live TV and HDMI 1-4 first, then the 12 installed consumer apps alphabetically.
 const SOURCE_NAMES = ['Live TV', 'HDMI 1', 'HDMI 2', 'HDMI 3', 'HDMI 4'];
 const ALL_APPS_COUNT = SOURCE_NAMES.length + 12;
-const walls = [{ id: 'misty' }, { id: 'cove' }]; // Legacy preference IDs only; no photo assets remain.
 const artFixture = readFileSync(root + 'scripts/fixtures/art-test.jpg');
 const out = root + '.local/qa/';
 mkdirSync(out, { recursive: true });
@@ -30,7 +29,8 @@ const sourceFiles = ['app/main.js', 'app/art-mode.js', 'app/device.js', 'app/ind
 const hashes = () => Object.fromEntries(sourceFiles.map(f => [f, createHash('sha256').update(readFileSync(root + f)).digest('hex')]));
 const report = { scope: 'Production UI in Chromium; mock public Tizen API only; no TV contacted.', sourceBefore: hashes(), checks: [], failures: [], knownBugs: [], pageErrors: [], expectedNetworkFailures: [] };
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
-const baseline = (patch = {}) => ({ dock: PRIMARY.slice(), wallpaper: walls[0].id, mode: 'fixed', lastApp: 'netflix', theme: 'shore', ...patch });
+// Legacy-format seed: wallpaper and mode are retired fields that migration must accept and drop.
+const baseline = (patch = {}) => ({ dock: PRIMARY.slice(), wallpaper: 'misty', mode: 'fixed', lastApp: 'netflix', theme: 'shore', ...patch });
 let preview, current, section = '';
 
 // A known app bug is recorded loudly rather than silently accepted. When the app is
@@ -219,9 +219,10 @@ try {
   preview = await openPreview();
   await run('Legacy preference migration', async () => {
     for (const theme of ['list', 'shore', 'grid']) {
-      await page({ seed: baseline({ theme, dock: ['youtube', 'netflix'], wallpaper: walls[1].id, lastApp: 'youtube', mode: '15' }) });
+      await page({ seed: baseline({ theme, dock: ['youtube', 'netflix'], wallpaper: 'cove', lastApp: 'youtube', mode: '15' }) });
       const s = await state();
-      check(theme + ' preserves order, wallpaper and rotation', same(s.dock, ['youtube', 'netflix']) && s.wallpaper === walls[1].id && s.mode === '15' && s.lastApp === 'youtube', s);
+      check(theme + ' preserves order and last app', same(s.dock, ['youtube', 'netflix']) && s.lastApp === 'youtube', s);
+      check(theme + ' drops retired wallpaper and rotation fields', !['wallpaper', 'mode', 'wall', 'material', 'font'].some(k => k in s || k in s.look), s);
       check(theme + ' maps to intended two-layout appearance on Art Mode', s.look.layout === (theme === 'list' ? 'list' : 'dock') && s.look.bg === 'photo', s.look);
       await closePage();
     }
@@ -229,7 +230,7 @@ try {
       await page({ seed: baseline({ look: { bg, layout: 'list', focus: 'type', apps: 'text', controls: 'text', font: 'manrope' } }) });
       const s = await state();
       check('Stored ' + bg + ' background migrates to Art Mode and keeps other choices', s.look.bg === 'photo' && s.shown.bg === 'photo' && s.look.layout === 'list' && s.look.focus === 'type' && s.look.apps === 'text', s.look);
-      check('Stored retired font migrates to Inter', s.look.font === 'inter' && s.look.inputs === 'connected', s.look);
+      check('Stored retired font is dropped', !('font' in s.look) && s.look.inputs === 'connected', s.look);
       await look({ controls: 'both' });
       check('Next write stores the migrated ' + bg + ' background as Art Mode', (await stored()).look?.bg === 'photo' || (await stored()).bg === 'photo', await stored());
       await closePage();
@@ -256,9 +257,9 @@ try {
     await page({ seed: '{broken', legacy: baseline({ dock: ['netflix'], lastApp: 'netflix' }) });
     check('Malformed primary recovers valid legacy key', same((await state()).dock, ['netflix']));
     await closePage();
-    await page({ seed: { dock: [], wallpaper: 'missing', mode: 'constructor', theme: 'constructor' } });
+    await page({ seed: { dock: [], wallpaper: 'missing', mode: 'constructor', theme: 'constructor', look: { layout: 'grid', focus: 'blur', clock: 7 } } });
     const s = await state();
-    check('Invalid values recover usable bounded Home', s.dock.length >= 1 && s.dock.length <= 9 && s.wallpaper === 'missing' && s.look.source === 'art' && ['fixed', 'open', '5', '15', '60'].includes(s.mode), s);
+    check('Invalid values recover usable bounded Home', s.dock.length >= 1 && s.dock.length <= 9 && s.look.source === 'art' && s.look.layout === 'dock' && s.look.focus === 'glass' && s.look.clock === 'time', s);
     await closePage();
     await page({ seed: baseline({ dock: [EXTRA, 'netflix'], lastApp: EXTRA }), catalogFailure: true });
     await library();
@@ -266,13 +267,13 @@ try {
   });
   await run('Startup fallbacks remain usable', async () => {
     await page({ noFontAPI: true });
-    check('Missing font-loading API has usable baseline Home', (await state()).look.font === 'inter' && (await call('where')).focusCount === 1);
+    check('Missing font-loading API has usable baseline Home', (await state()).fonts.loaded && (await call('where')).focusCount === 1);
     await closePage();
-    await page({ seed: baseline({ mode: 'open' }), storageFailure: true });
-    check('Failed open-mode write retains prior photo', (await state()).wallpaper === walls[0].id && (await stored()).wallpaper === walls[0].id);
+    await page({ storageFailure: true });
+    check('Failed startup write keeps the saved preferences and a usable Home', !(await state()).storageOk && same(await stored(), baseline()) && (await call('where')).focusCount === 1);
   });
   await run('Font recovery invalidates fallback measurements', async () => {
-    const seed = baseline({ dock: ['sbs', 'netflix'], lastApp: 'sbs', look: { bg: 'photo', layout: 'list', apps: 'both', font: 'inter', controls: 'both', focus: 'glass', material: 'soft' } });
+    const seed = baseline({ dock: ['sbs', 'netflix'], lastApp: 'sbs', look: { layout: 'list', apps: 'both', controls: 'both', focus: 'glass' } });
     const geometry = () => current.evaluate(() => ({
       plate: document.querySelector('#phScene > .ph-plate.is-current').style.width,
       names: [...document.querySelectorAll('.ph-name')].map(e => ({ text: e.textContent, size: e.style.fontSize, top: e.style.top }))
@@ -287,20 +288,20 @@ try {
     }));
     check('Slow baseline font keeps Home usable', (await state()).fonts.baselineFallback && (await call('where')).focusCount === 1 && requests > 0);
     releaseFont();
-    await current.waitForFunction(() => !ShoreQA.state().fonts.baselineFallback && ShoreQA.state().fonts.loaded.includes('inter'));
+    await current.waitForFunction(() => !ShoreQA.state().fonts.baselineFallback && ShoreQA.state().fonts.loaded);
     check('Recovered font restores normal label and focus geometry', same(await geometry(), expected), { expected, actual: await geometry() });
   });
   await run('Hidden boot installs a complete wallpaper without animation frames', async () => {
     await page({ initiallyHidden: true, pauseHiddenFrames: true, rejectDecode: true });
     const before = await stored();
-    check('Hidden startup settles with every wallpaper image loaded', await current.evaluate(() => document.hidden && ['photo', 'matImg', 'phFieldImg', 'utFieldImg'].every(id => {
+    check('Hidden startup settles with every background image loaded', await current.evaluate(() => document.hidden && ['photo', 'matImg', 'sheetBg'].every(id => {
       const image = document.getElementById(id); return image.complete && image.naturalWidth > 0;
     })));
     await current.evaluate(() => window.__setHidden(false)); await ready();
     check('Showing the launcher keeps the same saved appearance', same(await stored(), before) && (await call('where')).focusCount === 1);
     await closePage();
     await page({ rejectDecode: true });
-    check('A valid loaded image survives a visible decode rejection', (await state()).shown.wall === (await state()).wallpaper && !(await state()).pending);
+    check('A valid loaded image survives a visible decode rejection', !!(await state()).shown.artRevision && !(await state()).pending);
   });
   await run('Chromium 85 layout without inset shorthand', async () => {
     await page({}, p => p.route('**/style.css', async route => {
@@ -335,7 +336,7 @@ try {
     for (const width of [1920, 1280]) {
       await current.setViewportSize({ width, height: width * 9 / 16 });
       for (const layout of ['dock', 'list']) for (const controls of ['icons', 'both', 'text']) {
-        await look({ bg: 'photo', layout, controls, focus: 'glass', font: 'inter' }); await scene('home');
+        await look({ layout, controls, focus: 'glass' }); await scene('home');
         if ((await call('where')).zone === 'util') await nav('back');
         await nav(layout === 'dock' ? 'up' : 'right');
         await nav(...Array(2).fill(layout === 'dock' ? 'left' : 'up'));
@@ -576,14 +577,13 @@ try {
     for (const axis of ['apps', 'controls']) for (const value of ['icons', 'both', 'text']) { await look({ [axis]: value }); check(axis + ' ' + value + ' persists', (await state()).look[axis] === value); }
     for (const value of ['always', 'connected']) { await look({ inputs: value }); check('inputs ' + value + ' persists', (await state()).look.inputs === value && (await stored()).look.inputs === value); }
     await look({ layout: 'dock', focus: 'glass', apps: 'both', controls: 'icons' });
-    for (const material of ['soft', 'frost', 'tint']) { await look({ material }); check(material + ' matches displayed bundle', (await state()).shown.material === material && (await state()).look.material === material); }
-    check('Inter is the only font', same((await state()).fonts.available, ['inter']) && (await state()).look.font === 'inter' && (await state()).shown.font === 'inter');
-    for (const [patch, message] of [[{ bg: 'dark' }, 'Invalid appearance value: bg'], [{ bg: 'light' }, 'Invalid appearance value: bg'], [{ font: 'newsreader' }, 'Unavailable font: newsreader'], [{ font: 'geist' }, 'Unavailable font: geist']]) {
+    check('Home names use Inter', await current.evaluate(() => /^"?Inter"?,/.test(getComputedStyle(document.querySelector('.tile .label')).fontFamily)));
+    for (const patch of [{ bg: 'dark' }, { bg: 'light' }, { font: 'newsreader' }, { material: 'tint' }, { wall: 'misty' }]) {
+      const message = 'Invalid appearance value: ' + Object.keys(patch)[0];
       const writes = (await state()).writes;
       const error = await current.evaluate(patch => { try { ShoreQA.look(patch); return null; } catch (e) { return e.message; } }, patch);
       check('Retired appearance ' + JSON.stringify(patch) + ' is rejected', error === message && (await state()).writes === writes && (await state()).look.bg === 'photo', error);
     }
-    for (const wall of walls) { await look({ wall: wall.id }); check('Wallpaper ' + wall.id + ' has matching bundle', (await state()).shown.wall === wall.id && (await state()).wallpaper === wall.id); }
     for (const layout of ['list', 'dock']) for (const width of [1920, 1280]) {
       await current.setViewportSize({ width, height: width * 9 / 16 }); await look({ layout });
       await current.waitForFunction(w => Math.abs(document.getElementById('stage').getBoundingClientRect().width - w) < 1, width);

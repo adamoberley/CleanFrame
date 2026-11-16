@@ -73,7 +73,7 @@ async function sample(name, keys, rounds = 4) {
 async function memory() {
   await cdp.send('HeapProfiler.collectGarbage');
   const m = await metrics(), dom = await cdp.send('Memory.getDOMCounters');
-  const images = await page.evaluate(() => ({ elements: document.images.length, sources: [...new Set([...document.images].map(i => i.currentSrc || i.src))], resources: performance.getEntriesByType('resource').filter(r => /\/(wallpapers|materials)\//.test(r.name)).length }));
+  const images = await page.evaluate(() => ({ elements: document.images.length, sources: [...new Set([...document.images].map(i => i.currentSrc || i.src))], resources: performance.getEntriesByType('resource').length }));
   return { heapBytes: m.JSHeapUsedSize, dom, images };
 }
 
@@ -112,9 +112,7 @@ try {
   const start = Date.now();
   await page.goto(preview.baseURL + '/home/'); await ready(); await page.waitForLoadState('networkidle');
   report.startupMs = Date.now() - start;
-  const startupResources = await page.evaluate(() => performance.getEntriesByType('resource').map(r => r.name));
-  check('No wallpaper gallery thumbnail fetch at startup', !startupResources.some(u => /-thumb\./.test(u)));
-  await look({ layout: 'list', apps: 'both', controls: 'icons', focus: 'glass', material: 'soft', font: 'inter' });
+  await look({ layout: 'list', apps: 'both', controls: 'icons', focus: 'glass' });
   await sample('Photo List navigation', ['down', 'down', 'down', 'up', 'up', 'up']);
   await look({ layout: 'dock' });
   await sample('Photo Dock navigation', ['right', 'right', 'right', 'left', 'left', 'left']);
@@ -151,11 +149,10 @@ try {
   check('All appearance changes apply within bounded browser budget', loadTimes.every(r => r.ms < report.budgets.appearanceMaximumMs), loadTimes);
   await page.waitForLoadState('networkidle');
   const beforeSame = await memory();
-  const sameWall = (await call('state')).wallpaper;
-  for (let i = 0; i < 4; i++) { await call('look', { wall: sameWall }); await ready(); }
+  for (let i = 0; i < 4; i++) { await call('look', {}); await ready(); }
   await page.waitForTimeout(100);
   const afterSame = await memory();
-  check('Selecting current photo reuses bundle', beforeSame.images.resources === afterSame.images.resources && beforeSame.images.elements === afterSame.images.elements, { before: beforeSame.images, after: afterSame.images });
+  check('Re-applying the current look reuses the Art bundle', beforeSame.images.resources === afterSame.images.resources && beforeSame.images.elements === afterSame.images.elements, { before: beforeSame.images, after: afterSame.images });
   // Prime the small cycle before comparing retained objects.
   for (const patch of cycle) { await call('look', patch); await ready(); }
   await page.waitForTimeout(300);

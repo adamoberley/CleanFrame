@@ -9,6 +9,7 @@ const require = createRequire(import.meta.url);
 const jpeg = readFileSync(root + 'scripts/fixtures/art-test.jpg');
 const size = require('../vetro/cleanframe-art/index.js').jpegSize(jpeg);
 const first = createHash('sha256').update('fixture A').digest('hex'), second = createHash('sha256').update('fixture B').digest('hex');
+// Includes retired fields (wall, material, font, mode) that migration accepts and drops.
 const seed = { look: { bg: 'photo', wall: 'misty', source: 'art', layout: 'dock', focus: 'glass', material: 'soft', font: 'inter', apps: 'both', controls: 'both' }, mode: '15' };
 const out = root + '.local/qa/'; mkdirSync(out, { recursive: true });
 let preview, p;
@@ -45,9 +46,9 @@ async function fresh(options = {}) {
   });
   await p.goto(preview.baseURL + '/home/'); await ready(); return fixture;
 }
-const artImages = () => p.evaluate(() => ['photo','phFieldImg','phFieldImgAlt','utFieldImg','utFieldImgAlt'].map(id => document.getElementById(id).src));
+const artImages = () => p.evaluate(() => [document.getElementById('photo').src, FrameArt.current() && FrameArt.current().url].filter(Boolean));
 try {
-  preview = await openPreview({ publicFonts: true });
+  preview = await openPreview();
   const f = await fresh({ seed: { ...seed, look: { ...seed.look, bg: 'dark' } } });
   await p.waitForFunction(revision => ShoreQA.state().shown.artRevision === revision, first);
   check('A stored Dark background starts on Art Mode with one safe metadata/JPEG pair', f.calls.length === 2 && (await state()).committed.bg === 'photo' && (await state()).shown.bg === 'photo' && (await state()).committed.source === 'art' && (await state()).shown.artRevision === first);
@@ -56,8 +57,8 @@ try {
   await p.evaluate(() => ShoreQA.nav('down', 'down', 'down', 'right', 'left', 'up', 'down'));
   check('Visual remote navigation performs no further bridge networking', f.calls.length === 2);
   check('Visual offers no background choice', !(await p.evaluate(() => ShoreQA.actions())).some(a => /^choice\.bg\./.test(a)));
-  check('Art swaps the photo and every material as one bundle', new Set(await artImages()).size === 1 && (await artImages())[0].startsWith('blob:'));
-  check('Gallery and rotation are absent', !(await state()).rotation.active && !(await p.evaluate(() => ShoreQA.actions())).some(a => /wallpaper|rotation|source/.test(a)));
+  check('Art installs the bridge photo as the background', new Set(await artImages()).size === 1 && (await artImages())[0].startsWith('blob:'));
+  check('Gallery and rotation are absent', !(await p.evaluate(() => ShoreQA.actions())).some(a => /wallpaper|rotation|source/.test(a)));
   check('Art uses neutral surfaces without adaptive photo ink', await p.evaluate(() => document.getElementById('stage').classList.contains('source-art') && !document.getElementById('stage').classList.contains('has-adaptive-ink') && (() => { const m = document.getElementById('matImg'); return getComputedStyle(m).visibility === 'hidden' || m.classList.contains('is-frost') && /^data:image\/jpeg/.test(m.src); })()));
   await p.screenshot({ path: out + 'art-background-public.png' });
   const geometry = await p.evaluate(() => {
@@ -65,7 +66,6 @@ try {
     return [...document.querySelectorAll('#appearanceRows .setting-section')].map(e => { const r = e.getBoundingClientRect(); return { id: e.className.match(/section-(\w+)/)[1], above: r.bottom <= desc.top, inside: r.right <= root.right && r.bottom <= root.bottom }; });
   });
   check('All five Visual rows fit above the remote hint', ['layout', 'focus', 'apps', 'controls', 'inputs'].every(id => geometry.find(g => g.id === id)?.above && geometry.find(g => g.id === id)?.inside), geometry);
-  check('Art background drops gallery scrims for the calibrated Art look', await p.evaluate(() => Array.prototype.every.call(document.querySelectorAll('#bg>div'), el => getComputedStyle(el).display === 'none')));
   check('Sheets sit on a frosted copy of the Art photo with the same look', await p.evaluate(async () => {
     ShoreQA.scene('settings'); await new Promise(r => setTimeout(r, 120));
     const bg = document.getElementById('sheetBg'), s = getComputedStyle(bg), veil = getComputedStyle(document.querySelector('.sheet-veil'));
@@ -95,7 +95,7 @@ try {
   check('A corrupt JPEG at startup installs no Art bundle and writes no preference', bad.calls.includes('/art/' + first + '/image.jpg') && !(await state()).shown.artRevision && (await state()).writes === 0 && !(await artImages()).some(src => src.startsWith('blob:')));
   check('Home stays usable with one focus when Art is unavailable', (await p.evaluate(() => ShoreQA.where())).focusCount === 1 && (await state()).committed.bg === 'photo');
   const hidden = await fresh({ seed: { ...seed, mode: 'open' }, hidden: true });
-  check('Hidden cold start performs no bridge request and keeps the saved source', hidden.calls.length === 0 && (await state()).committed.source === 'art' && (await state()).committed.wall === 'misty' && (await state()).shown.artRevision === null);
+  check('Hidden cold start performs no bridge request and keeps the saved source', hidden.calls.length === 0 && (await state()).committed.source === 'art' && !('wall' in (await state()).committed) && (await state()).shown.artRevision === null);
   await p.evaluate(() => __visibility(false));
   await p.waitForFunction(revision => ShoreQA.state().shown.artRevision === revision, first);
   check('Visible Home refreshes the cold placeholder without a preference write', hidden.calls.length === 2 && (await state()).writes === 0);
