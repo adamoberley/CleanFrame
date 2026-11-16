@@ -6,7 +6,7 @@ The original publication record below was prepared 20 October 2026. For the curr
 
 That initial public source contained the 0.6.1 app, public-font screenshot, development tools, browser tests, setup notes and asset notices. Research folders, design studies, draft writing, unused Grid/optics code and obsolete generated images were removed after the owner's approval. Recoverable copies remain outside the public source.
 
-Signing keys, account tokens, local device addresses, recovery state and personal signed widgets remain in ignored local storage. The app now bundles only Inter; the public-source check verifies its hash and still rejects proprietary font files.
+Signing keys, account tokens, local device addresses, recovery state and personal signed widgets remain in ignored local storage. The app now bundles no fonts and uses the TV's system font. The public-source check rejects any font file.
 
 ## Asset review
 

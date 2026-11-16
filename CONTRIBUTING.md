@@ -32,4 +32,4 @@ Keep passwords, tokens, signing keys, serial numbers, DUIDs, addresses and origi
 
 ## Assets and licences
 
-CleanFrame's original code is MIT. Contributions to that code use the same licence. Keep upstream asset licences and source records intact. Add only assets you have permission to redistribute, and explain any required attribution or separate terms. Inter is the only font; do not add paid fonts. Review `THIRD_PARTY_NOTICES.md` before adding or replacing a logo, photograph or font.
+CleanFrame's original code is MIT. Contributions to that code use the same licence. Keep upstream asset licences and source records intact. Add only assets you have permission to redistribute, and explain any required attribution or separate terms. The app uses the TV's system font and ships no font files, so do not add any. Review `THIRD_PARTY_NOTICES.md` before adding or replacing a logo or photograph.

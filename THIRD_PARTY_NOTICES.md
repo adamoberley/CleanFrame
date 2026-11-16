@@ -4,11 +4,7 @@ The root MIT licence covers CleanFrame's original code and documentation. Third-
 
 ## Fonts
 
-| Material | Terms and source record |
-| --- | --- |
-| Inter 4.1 | SIL Open Font License 1.1; `app/assets/inter-OFL.txt`. Source: [rsms/inter v4.1](https://github.com/rsms/inter/releases/tag/v4.1) |
-
-Inter is the only font in the app and in exports.
+CleanFrame ships no font files. It uses the TV's system font (One UI Sans) and falls back to standard sans-serif fonts already installed on the device.
 
 ## Icons and trademarks
 
@@ -21,6 +17,10 @@ Inter is the only font in the app and in exports.
 
 Brand marks identify services. Their owners retain trademark rights; this project claims no endorsement or affiliation.
 
+## Native code
+
+`native/doorbell-pip` adapts its window setup from Vetro (MIT, Copyright (c) 2026 Vetro contributors), as recorded in [its README](native/doorbell-pip/README.md).
+
 ## Photographs
 
 This personal fork ships no photographs. Earlier bundled wallpapers and their credits remain in Git history under their original terms. Owner-selected Art Mode photos are read locally into private caches and are never included in source or exported widgets. Owners retain responsibility for their photo rights.
@@ -29,4 +29,4 @@ This personal fork ships no photographs. Earlier bundled wallpapers and their cr
 
 Development dependencies retain the licences in their npm packages. They are not copied into the TV JavaScript runtime.
 
-`npm run export:public` includes this notice and the root MIT licence. Preserve the included font and icon licence texts. Review [public release preparation](docs/public-release.md) before publishing a repository or download.
+`npm run export:public` includes this notice and the root MIT licence. Preserve the included icon licence texts. Review [public release preparation](docs/public-release.md) before publishing a repository or download.
