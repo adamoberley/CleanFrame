@@ -7,8 +7,9 @@
   var COOL = { brightness: 0.41, contrast: 0.86, saturate: 0.50, tint: [246, 238, 222], gamma: [1, 1.02, 1.15] };
   var WARM = { brightness: 0.41, contrast: 0.86, saturate: 0.48, tint: [250, 212, 160], gamma: [1, 1.03, 1.19] };
   var look = null;
-  var current = null, loaded = false, readers = [], loading = false, refreshing = false, epoch = 0, saves = 0, requests = [];
-  var copyNo = 0, currentTemp = null;
+  var current = null, loaded = false, readers = [], loading = false, refreshing = false, epoch = 0, saves = 0, promoted = 0, requests = [];
+  // Files an unfinished save still needs (its temp file and its photo), by name; tidy keeps them.
+  var copyNo = 0, busy = {};
   var urls = [], retainedURL = null, error = null, fsDir = null, db = null;
   function host() {
     var h, parts;
@@ -184,7 +185,7 @@
         try { pointer = JSON.parse(localStorage.getItem(META_KEY)); } catch (e) { pointer = null; }
         files.forEach(function (file) {
           var obsolete = /^[a-f0-9]{64}\.jpg$/.test(file.name) && (!metadata(pointer) || file.name !== pointer.revision + '.jpg') && (!current || file.name !== current.revision + '.jpg') && (!retainedURL || retainedURL.indexOf('/' + file.name) < 0);
-          if (obsolete || /^incoming-[0-9]+-[0-9]+\.tmp$/.test(file.name) && file.name !== currentTemp) {
+          if (!busy[file.name] && (obsolete || /^incoming-[0-9]+-[0-9]+\.tmp$/.test(file.name))) {
             try { fsDir.deleteFile(file.fullPath); } catch (e) { /* Retry on the next refresh. */ }
           }
         });
@@ -196,10 +197,14 @@
     var ended = false, timer = setTimeout(function () { done(record(m, url)); }, 6000);
     function done(value) { if (ended) return; ended = true; clearTimeout(timer); complete(value); }
     if (fsDir) {
-      var mine = ++saves, tmp, stream, data = new window.Uint8Array(bytes), i, part, tempName = 'incoming-' + g + '-' + (++copyNo) + '.tmp';
-      currentTemp = tempName;
+      var mine = ++saves, tmp, stream, data = new window.Uint8Array(bytes), i, part, tempName = 'incoming-' + g + '-' + (++copyNo) + '.tmp', photo = m.revision + '.jpg';
+      busy[tempName] = (busy[tempName] || 0) + 1; busy[photo] = (busy[photo] || 0) + 1;
+      var released = false, release = function () {
+        if (released) return; released = true;
+        [tempName, photo].forEach(function (name) { if (!--busy[name]) delete busy[name]; });
+      };
       tidy(function () {
-        if (ended || g !== epoch) { done(null); return; }
+        if (ended || g !== epoch) { release(); done(null); return; }
         try {
           // A complete JPEG is promoted before the last-good pointer. Overwrite
           // an orphan of the same revision too: it may be a corrupt old cache.
@@ -215,14 +220,18 @@
                 part = Array.prototype.slice.call(data.subarray(i, i + 262144)); stream.writeBytes(part); i += 262144;
                 if (i < data.length) { setTimeout(step, 0); return; }
                 stream.close(); stream = null;
-                fsDir.moveTo(tmp.fullPath, fsDir.fullPath + '/' + m.revision + '.jpg', true, promote, function () { done(record(m, url)); });
-              } catch (e) { if (stream) { try { stream.close(); } catch (ignoreClose) { /* Best effort. */ } } done(record(m, url)); }
+                fsDir.moveTo(tmp.fullPath, fsDir.fullPath + '/' + photo, true, promote, function () { release(); done(record(m, url)); });
+              } catch (e) { if (stream) { try { stream.close(); } catch (ignoreClose) { /* Best effort. */ } } release(); done(record(m, url)); }
             }());
-          }, function () { done(record(m, url)); });
-        } catch (e) { done(record(m, url)); }
+          }, function () { release(); done(record(m, url)); });
+        } catch (e) { release(); done(record(m, url)); }
       });
       function promote() {
-        if (mine !== saves) { done(null); return; } // A newer photo's save owns the pointer.
+        release();
+        // The pointer only moves forward: a save that started earlier never replaces a later
+        // one that has already been promoted, but does count if the later one gave up.
+        if (mine < promoted) { done(null); return; }
+        promoted = mine;
         try {
           localStorage.setItem(META_KEY, JSON.stringify(m));
           tidy(function () {});

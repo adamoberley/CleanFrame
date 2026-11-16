@@ -477,21 +477,37 @@
      live stream behind a fresh snapshot. A stream that stalls without an error (Wi-Fi blip,
      go2rtc restarting) would otherwise freeze on its last frame, since the TV reports no frames. */
   var camTick = 0, camTicks = 0;
+  // One snapshot per tile at a time. It is abandoned after 8 s, so a hung request cannot block
+  // later retries or the stall reconnect. The start time paces retries of a failed one.
+  function takeSnapshot(b, cam, ok, fail) {
+    var snap = new Image(), timer = setTimeout(function () { end(); snap.src = ''; fail(); }, 8000);
+    function end() { clearTimeout(timer); snap.onload = snap.onerror = null; if (b._snap === snap) b._snap = null; }
+    b._snap = snap; b._snapAt = Date.now(); b._snapEnd = end;
+    snap.onload = function () { end(); if (snap.naturalWidth && snap.naturalHeight) ok(snap); else fail(); };
+    snap.onerror = function () { end(); fail(); };
+    snap.src = cameraStillURL(cam);
+  }
+  // A camera's real shape, learned from a snapshot or frame: remembered and laid out at once.
+  function learnCamera(t, i, r) {
+    if (t.ratios[i] && Math.abs(t.ratios[i] - r) <= 0.01) return;
+    t.ratios[i] = r; rememberCamera(CONTROLS.cameras[i].src, { r: Math.round(r * 1000) / 1000 });
+    if (top() === t) render();
+  }
   function cameraTick() {
     if (top().id !== 'cameras' || document.hidden) { clearInterval(camTick); camTick = 0; return; }
     if (++camTicks % 6) { if (sheetView.querySelector('.cam .cam-still:not([src])')) render(); return; }
     Array.prototype.forEach.call(sheetView.querySelectorAll('.cam'), function (b, i) {
       var im = b.querySelector('.cam-live'), still = b.querySelector('.cam-still'), cam = CONTROLS.cameras[i];
       if (!im.getAttribute('src') || b._snap) return;
-      b._snap = new Image();
-      b._snap.onload = function () {
-        var snap = b._snap; b._snap = null;
-        if (!snap || !snap.naturalWidth || !im.getAttribute('src')) return;
-        still.src = snap.src; b.className = b.className.replace(' is-live', '');
+      // The stream reconnects either way; a fresh snapshot, when it comes, covers the switch.
+      function reconnect() {
+        if (!im.getAttribute('src')) return;
+        b.className = b.className.replace(' is-live', '');
         clearTimeout(b._retry); im.removeAttribute('src'); im.className = 'cam-live'; im.src = cameraURL(cam, true);
-      };
-      b._snap.onerror = function () { b._snap = null; };
-      b._snap.src = cameraStillURL(cam);
+      }
+      takeSnapshot(b, cam, function (snap) {
+        still.src = snap.src; learnCamera(top(), i, snap.naturalWidth / snap.naturalHeight); reconnect();
+      }, reconnect);
     });
   }
   function openSettings() { push({ id: 'settings', f: { id: S.settingsFocus } }); }
@@ -890,7 +906,7 @@
       var im = b.querySelector('.cam-live');
       clearTimeout(b._retry);
       if (im) { im.onload = im.onerror = null; im.removeAttribute('src'); }
-      if (b._snap) { b._snap.onload = b._snap.onerror = null; b._snap.src = ''; b._snap = null; }
+      if (b._snap) { var snap = b._snap; b._snapEnd(); snap.src = ''; }
     });
   }
   var CAM_BOX = { x: 80, y: 168, w: 1760, h: 808 }, CAM_GAP = 24;
@@ -1542,27 +1558,14 @@
       var tiles = cameraLayout(cameraRatios(t));
       Array.prototype.forEach.call(el.grid.querySelectorAll('.cam'), function (b, i) {
         var box = t.full ? fullBox(t.ratios[i] || 16 / 9) : tiles[i], im = b.querySelector('.cam-live'), still = b.querySelector('.cam-still'), cam = CONTROLS.cameras[i];
-        function learn(r) {
-          if (t.ratios[i] && Math.abs(t.ratios[i] - r) <= 0.01) return;
-          t.ratios[i] = r; rememberCamera(cam.src, { r: Math.round(r * 1000) / 1000 });
-          if (top() === t) render();
-        }
         // Streams run only where seen: every tile in the grid, only the chosen one in full screen,
         // and none while the TV player shows it.
         var wanted = document.documentElement.className.indexOf('is-avplay') < 0 && (!t.full || i === t.f.i);
         if (!wanted && im.getAttribute('src')) { clearTimeout(b._retry); im.onload = im.onerror = null; im.removeAttribute('src'); b.className = b.className.replace(' is-live', ''); }
-        // A failed snapshot is tried again at most every 10 s, not on every redraw.
-        if (wanted && !still.getAttribute('src') && !b._snap && !(Date.now() - (b._snapFailed || 0) < 10000)) {
-          // A plain JPEG snapshot shows something quickly and tells us the camera's shape.
-          b._snap = new Image();
-          b._snap.onload = function () {
-            var snap = b._snap; b._snap = null;
-            if (!snap || !snap.naturalWidth || !snap.naturalHeight) return;
-            still.src = snap.src;
-            learn(snap.naturalWidth / snap.naturalHeight);
-          };
-          b._snap.onerror = function () { b._snap = null; b._snapFailed = Date.now(); };
-          b._snap.src = cameraStillURL(cam);
+        // A plain JPEG snapshot shows something quickly and tells us the camera's shape. One that
+        // failed is tried again by the 10 s camera tick (requests at least 9 s apart), not on every redraw.
+        if (wanted && !still.getAttribute('src') && !b._snap && !(Date.now() - (b._snapAt || 0) < 9000)) {
+          takeSnapshot(b, cam, function (snap) { still.src = snap.src; learnCamera(t, i, snap.naturalWidth / snap.naturalHeight); }, function () {});
         }
         if (wanted && !im.getAttribute('src')) {
           im.className = 'cam-live';
@@ -1578,7 +1581,7 @@
           im.onload = function () {
             if (!im.naturalWidth || !im.naturalHeight) return;
             if (b.className.indexOf('is-live') < 0) b.className += ' is-live';
-            learn(im.naturalWidth / im.naturalHeight);
+            learnCamera(t, i, im.naturalWidth / im.naturalHeight);
           };
           im.src = cameraURL(cam);
         }

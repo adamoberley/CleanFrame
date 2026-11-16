@@ -701,6 +701,13 @@ try {
     await current.keyboard.down('Enter'); await current.keyboard.down('Enter');
     check('Held OK restores once without removing again', (await state()).dock.includes('netflix') && (await state()).dock.length === 9);
     await current.keyboard.up('Enter');
+    // On the TV, repeats can arrive without the repeat flag and a keyup can be lost.
+    const tvKey = (type, keyCode) => current.evaluate(([type, keyCode]) => { const e = new KeyboardEvent(type, { bubbles: true, cancelable: true }); Object.defineProperty(e, 'keyCode', { get: () => keyCode }); document.dispatchEvent(e); }, [type, keyCode]);
+    await tvKey('keydown', 13); await tvKey('keydown', 13);
+    check('Unflagged OK repeats act once', !(await state()).dock.includes('netflix') && (await state()).dock.length === 8);
+    await current.waitForTimeout(1100); await tvKey('keydown', 13);
+    check('After a lost keyup, OK works again 1 s after its last event', (await state()).dock.includes('netflix') && (await state()).dock.length === 9);
+    await tvKey('keyup', 13);
     await current.keyboard.down('Escape'); await current.keyboard.down('Escape');
     check('Held Back closes one layer only', (await call('where')).view === 'settings' && (await state()).focusAction === 'settings.editor');
     await current.keyboard.up('Escape'); await current.keyboard.press('Escape');
@@ -749,8 +756,8 @@ try {
       await p.addInitScript(() => localStorage.setItem('cleanframe.art.key', 'short'));
       p.on('request', r => { if (r.url().startsWith('http://127.0.0.1:8643/')) seen.push(r.headers()['x-cleanframe-key'] || null); });
     });
-    await current.waitForTimeout(300);
-    check('An invalid key is not sent', seen.every(k => k === null), seen);
+    await current.waitForFunction(() => !FrameArt.status().refreshing); await current.waitForTimeout(200);
+    check('An invalid key is not sent', seen.length > 0 && seen.every(k => k === null), seen);
   });
   await run('Clock and weather', async () => {
     await page({}, async p => {
