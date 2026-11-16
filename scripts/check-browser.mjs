@@ -865,13 +865,13 @@ try {
     // As on the TV: the MJPEG stream never reports a load, so shapes come from the snapshot alone.
     // Snapshots wait for the test to release them, so the order of events is fixed.
     let releaseSnaps, snapGate = new Promise(r => { releaseSnaps = r; });
-    const streamHits = { doorbell: 0, backyard: 0, nursery: 0 }, snapDown = new Set(), liveAtSnap = []; let snapHits = 0, watchSnaps = false;
+    const streamHits = { doorbell: 0, backyard: 0, nursery: 0 }, snapDown = new Set(), liveAtSnap = []; let snapHits = 0, watchSnaps = true;
     const streamTotal = () => streamHits.doorbell + streamHits.backyard + streamHits.nursery;
     await page({}, async p => {
       await p.clock.install(); // Time runs normally; fastForward stands in for the 10 s and 60 s waits.
       p.__expectedFailures.push('stream.mjpeg', 'frame.jpeg');
       await p.addInitScript(() => {
-        localStorage.setItem('cleanframe.controls.v1', JSON.stringify({ go2rtc: 'http://192.168.1.2:1984', cameras: [{ name: 'Front door', src: 'doorbell' }, { name: 'Backyard', src: 'backyard', ratio: '16:9' }, { name: 'Nursery', src: 'nursery' }] }));
+        localStorage.setItem('cleanframe.controls.v1', JSON.stringify({ go2rtc: 'http://192.168.1.2:1984', cameras: [{ name: 'Front door', src: 'doorbell', full: 'doorbell_hd' }, { name: 'Backyard', src: 'backyard', ratio: '16:9' }, { name: 'Nursery', src: 'nursery' }] }));
         const I = window.Image; window.__snaps = []; window.Image = function (w, h) { const i = new I(w, h); window.__snaps.push(i); return i; };
       });
       // Live streams hang, like MJPEG on the TV; the doorbell's first connection drops.
@@ -904,11 +904,12 @@ try {
     const snapsAtDrop = snapHits;
     await current.clock.fastForward(10000); await settle(() => streamHits.doorbell > dropped && snapHits > snapsAtDrop); await current.waitForTimeout(100);
     check('A dropped stream reconnects after 10 s, with a snapshot to check the camera', streamHits.doorbell === dropped + 1 && streamHits.backyard === 1 && snapHits === snapsAtDrop + 1 && !(await current.evaluate(() => document.querySelector('.cam').classList.contains('is-offline'))), { streamHits, snapHits });
-    const snapsBefore = snapHits, streamsBefore = streamTotal(); watchSnaps = true;
+    const snapsBefore = snapHits, streamsBefore = streamTotal();
     for (let i = 0; i < 5; i++) { await current.clock.fastForward(10000); await current.waitForTimeout(30); }
     await settle(() => snapHits >= snapsBefore + 3 && streamTotal() >= streamsBefore + 3); await current.waitForTimeout(100);
     check('Every 60 s each stream reconnects behind a fresh snapshot', snapHits === snapsBefore + 3 && streamTotal() === streamsBefore + 3, { snapHits, snapsBefore, streamHits });
-    check('A tile closes its own stream before its snapshot (six cameras would hold all six HTTP/1.1 connections)', liveAtSnap.length === 3 && liveAtSnap.every(open => !open), liveAtSnap);
+    // Opening, the 10 s retry and the 60 s refresh: 3 + 1 + 3 snapshots, each with its tile's stream closed.
+    check('Every snapshot is requested while its own tile streams nothing (six cameras would hold all six HTTP/1.1 connections)', liveAtSnap.length === 7 && liveAtSnap.every(open => !open), liveAtSnap);
     watchSnaps = false;
     const offline = () => current.evaluate(() => [...document.querySelectorAll('.cam')].map(b => b.classList.contains('is-offline')));
     snapDown.add('backyard');
@@ -929,6 +930,38 @@ try {
     await nav('back');
     const cancelled = await current.evaluate(() => ({ snaps: window.__pending.map(i => [i.getAttribute('src'), !!i.onload]), live: window.__live.map(i => i.getAttribute('src')) }));
     check('Leaving Cameras cancels pending snapshots and streams', cancelled.snaps.length === 3 && cancelled.snaps.every(([src, on]) => !src && !on) && cancelled.live.every(src => !src), cancelled);
+    // The TV player starting while every tile waits on its snapshot: Back must bring every stream back.
+    await current.evaluate(() => {
+      window.__avplay = []; window.__mark = window.__snaps.length;
+      window.webapis = { avplay: { open: u => __avplay.push('open ' + u), setListener() {}, setDisplayRect() {}, setDisplayMethod() {}, prepareAsync: ok => setTimeout(ok, 10), play: () => __avplay.push('play'), stop: () => __avplay.push('stop'), close: () => __avplay.push('close'), getState: () => 'PLAYING' } };
+    });
+    await act('util.cameras');
+    await current.waitForFunction(() => window.__snaps.slice(window.__mark).filter(i => /frame\.jpeg/.test(i.src)).length === 3);
+    await nav('ok'); await current.waitForFunction(() => document.documentElement.classList.contains('is-avplay'));
+    await nav('back'); await current.waitForTimeout(150);
+    check('Tiles whose snapshots the TV player cut off stream again after it', await current.evaluate(() => !document.documentElement.classList.contains('is-avplay') && document.querySelectorAll('.cam .cam-live[src]').length === 3));
+    await nav('back');
+  });
+  await run('Six cameras', async () => {
+    // Snapshots first, then streams, on every tile: with six cameras the streams alone fill the
+    // browser's six connections to go2rtc, so a snapshot asked for alongside them would never load.
+    const order = [];
+    await page({}, async p => {
+      p.__expectedFailures.push('stream.mjpeg');
+      await p.addInitScript(() => localStorage.setItem('cleanframe.controls.v1', JSON.stringify({ go2rtc: 'http://192.168.1.2:1984', cameras: [1, 2, 3, 4, 5, 6].map(n => ({ name: 'Camera ' + n, src: 'cam' + n, ratio: '16:9' })) })));
+      await p.route('http://192.168.1.2:1984/api/stream.mjpeg**', route => { order.push('live ' + new URL(route.request().url()).searchParams.get('src')); });
+      await p.route('http://192.168.1.2:1984/api/frame.jpeg**', async route => {
+        order.push('snap ' + new URL(route.request().url()).searchParams.get('src'));
+        await route.fulfill({ contentType: 'image/jpeg', body: Buffer.from('/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==', 'base64') });
+      });
+    });
+    await act('util.cameras');
+    await current.waitForFunction(() => document.querySelectorAll('.cam .cam-live[src]').length === 6);
+    for (let i = 0; i < 40 && order.filter(o => o.startsWith('live')).length < 6; i++) await current.waitForTimeout(25);
+    const offline = await current.evaluate(() => [...document.querySelectorAll('.cam')].map(b => b.classList.contains('is-offline')));
+    const firstLive = order.findIndex(o => o.startsWith('live'));
+    check('Six cameras ask for every snapshot before streaming', order.filter(o => o.startsWith('snap')).length === 6 && [1, 2, 3, 4, 5, 6].every(n => order.indexOf('snap cam' + n) < order.indexOf('live cam' + n)) && order.filter(o => o.startsWith('live')).length === 6 && offline.every(o => !o), { order, firstLive, offline });
+    await nav('back');
   });
   section = 'Run integrity';
   report.sourceAfter = hashes();

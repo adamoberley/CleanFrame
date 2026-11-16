@@ -512,10 +512,8 @@
     var im = b.querySelector('.cam-live'), still = b.querySelector('.cam-still'), cam = CONTROLS.cameras[i];
     clearTimeout(b._retry); im.removeAttribute('src'); im.className = 'cam-live'; b.className = b.className.replace(' is-live', '');
     b._paused = true;
-    function reconnect() {
-      var t = top(); b._paused = false;
-      if (t.id === 'cameras' && cameraWanted(t, i) && !im.getAttribute('src') && document.body.contains(im)) im.src = cameraURL(cam);
-    }
+    // The redraw starts the stream (with its retry and shape handlers) if the tile is still wanted.
+    function reconnect() { b._paused = false; if (top().id === 'cameras' && document.body.contains(im)) render(); }
     if (b._snap) { reconnect(); return; }
     takeSnapshot(b, cam, function (snap) {
       still.src = snap.src; cameraOffline(b, false); learnCamera(top(), i, snap.naturalWidth / snap.naturalHeight); reconnect();
@@ -928,6 +926,7 @@
       clearTimeout(b._retry);
       if (im) { im.onload = im.onerror = null; im.removeAttribute('src'); }
       if (b._snap) { var snap = b._snap; b._snapEnd(); snap.src = ''; }
+      b._paused = false; // Its reconnect will not run now; the next redraw starts the stream if wanted.
     });
   }
   var CAM_BOX = { x: 80, y: 168, w: 1760, h: 808 }, CAM_GAP = 24;
@@ -1583,11 +1582,10 @@
         // and none while the TV player shows it.
         var wanted = cameraWanted(t, i);
         if (!wanted && im.getAttribute('src')) { clearTimeout(b._retry); im.onload = im.onerror = null; im.removeAttribute('src'); b.className = b.className.replace(' is-live', ''); }
-        // A plain JPEG snapshot shows something quickly and tells us the camera's shape. One that
+        // A plain JPEG snapshot shows something quickly and tells us the camera's shape. It comes
+        // before the stream (refreshTile), so six cameras never starve their own snapshots. One that
         // failed is tried again by the 10 s camera tick (requests at least 9 s apart), not on every redraw.
-        if (wanted && !still.getAttribute('src') && !b._snap && !(Date.now() - (b._snapAt || 0) < 9000)) {
-          takeSnapshot(b, cam, function (snap) { still.src = snap.src; cameraOffline(b, false); learnCamera(t, i, snap.naturalWidth / snap.naturalHeight); }, function () { cameraOffline(b, true); });
-        }
+        if (wanted && !still.getAttribute('src') && !b._snap && !(Date.now() - (b._snapAt || 0) < 9000)) refreshTile(b, i);
         if (wanted && !im.getAttribute('src') && !b._paused) {
           im.className = 'cam-live';
           // A stream that drops (camera offline, go2rtc restarting) reconnects every 10 s while shown.
@@ -1785,9 +1783,11 @@
     var token = lookToken;
     window.FrameArt.refresh(function (fresh) {
       artRefreshing = false;
-      if (!fresh || token !== lookToken || document.hidden || top().id !== 'home' || S.pending) return;
+      if (!fresh || token !== lookToken || document.hidden) return;
       if (artRecord && artRecord.revision === fresh.revision) return;
       artRecord = fresh;
+      // Read while a sheet is open: installed on the way back to Home (pop).
+      if (top().id !== 'home' || S.pending) { artInstallCancelled = true; return; }
       setLook({}, { transient: true });
     });
   }

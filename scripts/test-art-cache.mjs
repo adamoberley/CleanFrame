@@ -102,7 +102,7 @@ test('a save that has started finishes after hiding, and an overlapping save kee
   assert.equal(JSON.parse(h.storage.get(META)).revision, A);
   assert.ok(![...h.files.keys()].some(n => n.startsWith('incoming-')));
 });
-test('repeated cancelled candidates keep installed blob alive and bound object URLs', async () => {
+test('repeatedly replaced candidates keep the installed blob alive and bound object URLs', async () => {
   const h = harness({ failMove: true }); await h.load(); const a = await h.refresh(); h.api.retain(a.url);
   for (const revision of [B,C,B,C]) { h.next(revision); await h.refresh(); }
   assert.ok(!h.revoked.includes(a.url)); assert.ok(h.revoked.length >= 2);
