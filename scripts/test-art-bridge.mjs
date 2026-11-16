@@ -72,19 +72,24 @@ test('Art picture settings keep only bounded brightness and colour temperature',
   const parsed = shard.wsFrames(frame);
   assert.equal(parsed.frames.length, 1); assert.equal(parsed.frames[0].data.toString(), 'hello'); assert.equal(parsed.rest.length, 1);
   assert.throws(() => shard.wsFrames(Buffer.from([129, 127, 0, 0, 0, 0, 0, 2, 0, 0])));
+  const clients = [{ id: 'art-app-1', isHost: true, attributes: { name: null } }, { id: 'me', isHost: true, attributes: { name: 'Q2xlYW5GcmFtZQ==' } }, { id: 'phone', isHost: false, attributes: { name: null } }];
+  assert.equal(shard.artHost({ id: 'me', clients }), 'art-app-1');
+  assert.equal(shard.artHost({ id: 'me', clients: clients.slice(1) }), null);
+  assert.equal(shard.artHost({ id: 'me', clients: [{ id: 'bad id;', isHost: true }] }), null);
 });
-test('current.json adds the Art look when available and keeps the last good value after a failure', async () => {
+test('current.json never waits for Art settings, then reports the last good value', async () => {
   await harness(async ({ port, setSettings }) => {
+    let reads = 0, release;
+    setSettings(timeout => { reads++; assert.equal(timeout, 8000); return new Promise(r => { release = () => r({ brightness: 5, colorTemperature: 3 }); }); });
     let res = await get(port);
     assert.equal(res.status, 200); assert.equal(JSON.parse(res.body).look, undefined);
-    let reads = 0;
-    setSettings(async timeout => { reads++; assert.equal(timeout, 2500); return { brightness: 5, colorTemperature: 3 }; });
-    await new Promise(r => setTimeout(r, 1600));
+    release(); await new Promise(r => setTimeout(r, 20));
     res = await get(port);
     assert.deepEqual(JSON.parse(res.body).look, { brightness: 5, colorTemperature: 3 });
-    await get(port); assert.equal(reads, 1);
+    assert.equal(reads, 1);
     setSettings(() => Promise.reject(new Error('channel closed')));
     await new Promise(r => setTimeout(r, 3100));
+    await get(port); await new Promise(r => setTimeout(r, 20));
     res = await get(port);
     assert.equal(res.status, 200); assert.deepEqual(JSON.parse(res.body).look, { brightness: 5, colorTemperature: 3 });
     assert.deepEqual(Object.keys(JSON.parse(res.body)).sort(), ['contentId', 'height', 'imageUrl', 'look', 'revision', 'width']);
