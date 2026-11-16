@@ -60,7 +60,7 @@ def forbidden(name):
             or (path.name.startswith('PP') and path.suffix.lower() in font_suffixes))
 
 
-# The app uses the TV's system font and ships no font files.
+# The app uses the TV's system font and ships no font files: any font file is a finding.
 public_fonts = {}
 
 for name in sorted(candidates):
@@ -119,9 +119,6 @@ for path in private_fonts:
     if git('hash-object', str(path)).decode().strip() in object_ids:
         findings.append('Known proprietary font bytes in Git history: ' + path.name)
 
-for name in []:
-    if not (ROOT / name).is_file():
-        findings.append('Missing public font licence: ' + name)
 
 if findings:
     raise SystemExit('\n'.join(sorted(set(findings))[:20]) + '\nTotal findings: ' + str(len(set(findings))))

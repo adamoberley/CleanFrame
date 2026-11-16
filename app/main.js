@@ -494,7 +494,7 @@
       this.key(t, 'ok');
     }
   };
-  /* Right from a list row picks the Apps/Settings control level with it on screen.
+  /* Right from a list row picks the Home control (Lights, Cameras, Apps, Settings) level with it on screen.
      Rows come from the layout model (never mid-scroll); the controls do not move. */
   function nearestUtil(row, U) {
     var sr = sceneEl.getBoundingClientRect(), scale = sr.width / 1920 || 1, y = PH_TOP + (row - scroll.photo) * PH_PITCH + PH_PITCH / 2;
@@ -526,7 +526,7 @@
 
   /* ---------- Installed apps ---------- */
   function appsItems() { return catalog.error ? [] : ALPHA; }
-  // Only a catalogue error puts a control in the header; Apps on Home lives in Settings.
+  // Only a catalogue error puts a control in the header; the editor opens from Settings (or an empty Home).
   function appsHead() { return catalog.error ? [['retry', 'Try again', '', '']] : []; }
   V.apps = {
     sheet: true,
@@ -985,10 +985,6 @@
     var d = new Date(), h = d.getHours() % 12 || 12, m = d.getMinutes();
     return h + ':' + (m < 10 ? '0' : '') + m;
   }
-  function clockHtml() {
-    // Proportional figures in the app-name face, so the clock reads as the same type as Home.
-    return clockText();
-  }
   /* Weather beside the clock, from Open-Meteo (no account or key). Location comes from
      cleanframe.weather.v1 = { lat, lon, unit: 'f' | 'c' }; without it the option is not offered.
      Fetched at most every 20 minutes while the clock shows weather; the last reading is kept. */
@@ -1031,7 +1027,7 @@
     return '<span class="weather">' + icon('wx-' + kind) + '<span class="weather-temp">' + weatherNow.temp + '°</span></span>';
   }
   function renderCaption(t, hs) {
-    var html = S.c.clock === 'off' ? '' : '<span class="clock">' + clockHtml() + (S.c.clock === 'weather' ? weatherHtml() : '') + '</span>';
+    var html = S.c.clock === 'off' ? '' : '<span class="clock">' + clockText() + (S.c.clock === 'weather' ? weatherHtml() : '') + '</span>';
     if (S.c.apps !== 'icons' && hs.items[hs.i] && (S.c.layout === 'list' ? photoLabel(hs.items[hs.i].id).size < PH_NAME || photoLabel(hs.items[hs.i].id).ellipsis : hs.zone === 'apps' && reducedDockLabel(hs.items[hs.i].id))) html += '<span class="cap-line full-name">' + esc(app(hs.items[hs.i].id).name) + '</span>';
     setHTML(caption, html);
   }

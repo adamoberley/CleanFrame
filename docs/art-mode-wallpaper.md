@@ -42,38 +42,45 @@ npm run pack:art
 `dist/cleanframe-art.vplugin` is ignored output. The packer is deterministic and includes only the checked-in `index.js` and manifest, plus the doorbell picture-in-picture build as `pip.b64.json` when `npm run build:pip` has produced one ([`native/doorbell-pip`](../native/doorbell-pip/README.md)); never configuration, a cache or artwork. Its text JSON is:
 
 ```json
-{"format":"vetro-plugin","version":1,"manifest":{"id":"cleanframe-art","name":"CleanFrame Art bridge","version":"1.3.1","apiVersion":1,"permissions":["exec"],"entry":"index.js"},"files":{"index.js":"<source text>"}}
+{"format":"vetro-plugin","version":1,"manifest":{"id":"cleanframe-art","name":"CleanFrame Art bridge","version":"1.4.0","apiVersion":1,"permissions":["exec"],"entry":"index.js"},"files":{"index.js":"<source text>"}}
 ```
 
-`manifest.json` is not a `files` entry. The packer enforces the 20-file / 512 KiB envelope; this shard uses one file, or two with the doorbell picture-in-picture build. The ES5 module uses Node 4.4 core APIs and exports `module.exports(ctx)` returning `{start, stop, status, route}`. It requires this Vetro API version 1 contract:
+`manifest.json` is not a `files` entry. The packer enforces the 20-file / 512 KiB envelope; this shard uses one file, or two with the doorbell picture-in-picture build. The module is ES5, run by Vetro's Node 12 on the TV, and exports `module.exports(ctx)` returning `{start, stop, status, route}`. It requires this Vetro API version 1 contract:
 
 - `ctx.dir`: an existing directory writable as the process UID; the shard canonicalises it and creates a private `art-cache/` child.
 - `ctx.execute(command, timeoutMs)`: root execution, returning a Promise for `{stdout, stderr, exit_code, timed_out}`. The host must enforce the timeout and its 1 MiB output limit. The shard requests 4 seconds per command and rejects excessive output/errors without exposing diagnostics.
-- `ctx.config.get/set`: private configuration. The shard reads `ctx.config.get().port`; absent values use `8643`. Only this host-managed `config.json` is expected to survive shard upgrades. The shard does not edit it directly.
+- `ctx.config.get/set`: private configuration. The shard reads `port` (absent: `8643`), `address` (see below) and the optional `pip: { stream, seconds }` for the doorbell picture-in-picture. Only this host-managed `config.json` is expected to survive shard upgrades. The shard does not edit it directly.
 - Vetro calls `start()` and `stop()` without awaiting their returned Promises; inspect `status()` and the listener after activation. Repeated starts coalesce. Stop closes the listener, destroys accepted sockets and invalidates pending refresh results; an already-issued root command remains subject to the host timeout. Restart waits for that refresh to settle before cleaning its cache. `status()` is safe local status; optional host `route()` returns 404, never an image or root API.
 
 The parent maintainer handles import/start under a separate device task, after checking the real host's loader/schema and context API against this contract. No unattended installer or admin-token HTTP route is supplied. Build preparation here does not contact Vetro or a TV.
 
 ## Loopback HTTP
 
-The shard defaults to **127.0.0.1**, port 8643. Private configuration may set `address` to the TV's own IPv4 interface address when its web runtime blocks loopback. Wildcard and nonlocal bindings are rejected. Every HTTP connection must originate from the exact bound address (including IPv4-mapped notation); other LAN clients receive 403 before any artwork response. It accepts GET only and at most eight concurrent TCP connections and eight active responses. Root preference/copy work coalesces into one refresh; successful reads have a 1.5-second reuse window.
+The shard defaults to **127.0.0.1**, port 8643. Private configuration may set `address` to the TV's own IPv4 interface address when its web runtime blocks loopback. Wildcard and nonlocal bindings are rejected. Every HTTP connection must originate from the exact bound address (including IPv4-mapped notation); other LAN clients receive 403 before any artwork response. It accepts GET, plus `POST`/`OPTIONS` on `/lights`, and at most eight concurrent TCP connections and eight active responses. Root preference/copy work coalesces into one refresh; successful reads have a 1.5-second reuse window.
 
 | Request | Result |
 | --- | --- |
-| `GET /current.json` | `{revision, contentId, imageUrl, width, height}`; `Cache-Control: no-store` |
+| `GET /current.json` | `{revision, contentId, imageUrl, width, height, look?}`; `look` is Art Mode's `{brightness, colorTemperature}` when read; `Cache-Control: no-store` |
+| `POST /lights` | Fires the fixed Vetro rule trigger `cleanframe-lights` (Vetro then publishes MQTT); the body is ignored. 204 on success, 429 within 1.5 s of the previous press, 502 if Vetro fails or takes over 5 s |
 | `GET /art/<64 lowercase hex revision>/image.jpg` | Immutable JPEG for that exact retained revision |
 | Unknown/evicted/mismatched revision, query variants, any other path | 404 |
 | Unsupported/corrupt preference or failed copy | 503 with only `{"error":"Art unavailable"}` |
-| Non-GET method | 405 |
+| Any other non-GET method or path | 405 |
 | HTTP(S), other web, or malformed Origin | 403 |
 
-Opaque `Origin: null` and nonweb `file:`, `widget:`, `wgt:` or `tizen:` origins receive CORS permission. Requests without Origin are accepted for packaged/native clients. An ordinary HTTP browser preview cannot use the real service: browser tests substitute synthetic bridge responses with explicit CORS. No listener address, source path or arbitrary command can be selected by HTTP. There is no artwork access for other LAN devices, authentication/session endpoint or HA proxy.
+Opaque `Origin: null` and nonweb `file:`, `widget:`, `wgt:` or `tizen:` origins receive CORS permission. Requests without Origin are accepted for packaged/native clients. An ordinary HTTP browser preview cannot use the real service: browser tests substitute synthetic bridge responses with explicit CORS. No listener address, source path, rule, topic or arbitrary command can be selected by HTTP. There is no artwork access for other LAN devices and no authentication/session endpoint. `/lights` can only fire the one fixed Vetro rule; it is the bridge's only path towards Home Assistant.
 
 Revision is SHA-256 of safe metadata plus the copied bytes. The bridge retains at most two revision files and one bounded temporary copy (up to about 36 MiB). A previous retained URL still serves its own bytes; an evicted URL returns 404 rather than the latest image. An open response holds its own descriptor while cache eviction proceeds. Plugin restart/upgrade discards this disposable bridge cache and rebuilds from the preference; the widget cache is independent.
 
+## Other connections and files
+
+- **Art Mode settings:** read-only `get_artmode_settings` over the TV's own Art channel (`ws://127.0.0.1:8001/api/v2/channels/com.samsung.art-app`), addressed to the Art app's client id, in the background and at most every 3 s. Only integer brightness (0–10) and colour temperature (−5..+5) are kept.
+- **Vetro's MQTT login:** with `pip.stream` configured, the shard reads `/opt/usr/home/owner/share/vetro-mqtt.json` (Vetro's broker settings, readable by the shard's user), connects to that broker with its own random client id (plain or TLS as configured), subscribes to `vetro/cleanframe/doorbell` and ignores retained messages. The login never leaves the TV and is never returned by HTTP or status.
+- **Doorbell picture-in-picture:** `ring` starts the bundled overlay as root only from a root-only copy whose hashes match those recorded at unpack; see [`native/doorbell-pip`](../native/doorbell-pip/README.md).
+
 ## Preference and file handling
 
-The only preference read is:
+The only Art preference read is:
 
 ```
 /opt/usr/home/owner/apps_rw/org.tizen.art-app/data/.pref/0f61537ef36906f51e0fa75852758b33df2df340
@@ -101,10 +108,10 @@ Browsers, or TVs without usable private filesystem access, use one atomic Indexe
 
 Startup reads and displays the last successful local image before starting a refresh. With a saved Art source but no cache, it immediately builds a neutral local placeholder and keeps the saved source. Startup/focus/visibility of visible Photo Home can refresh asynchronously, with a five-second event throttle. Hidden startup sends no request; hiding cancels active XHRs. There is no polling timer. Settings navigation and remote movement never trigger background bridge requests. Explicitly applying Art Mode can fetch its missing image. A refresh finishing while Settings or another appearance operation is active can update the private cache but cannot replace the committed Settings preview. The next eligible lifecycle return can install that cached/new revision as a complete atomic bundle.
 
-The widget manifest includes internet plus filesystem read/write privileges and network access only to `http://127.0.0.1:8643`. For a locally chosen alternate port, set the shard's private `port`, set localStorage `cleanframe.art.port` to the same decimal port (1024–65535), and align the local build's manifest access origin before signing. Keep that installation-specific adjustment local. For a TV that blocks loopback, privately set the shard `address` to its own interface IP, localStorage `cleanframe.art.host` to the same IP, and the personal widget manifest access origin to that address/port before signing. The widget permits only loopback or private IPv4 host values; this is installation configuration, not a discoverable LAN artwork endpoint. Do not commit the owner's address.
+The public widget manifest includes internet, filesystem read/write and the AVPlay privileges, and network access to `http://127.0.0.1:8643` and Open-Meteo (`https://api.open-meteo.com`, for the optional weather). An owner build adds its bridge address and go2rtc origin. For a locally chosen alternate port, set the shard's private `port`, set localStorage `cleanframe.art.port` to the same decimal port (1024–65535), and align the local build's manifest access origin before signing. Keep that installation-specific adjustment local. For a TV that blocks loopback, privately set the shard `address` to its own interface IP, localStorage `cleanframe.art.host` to the same IP, and the personal widget manifest access origin to that address/port before signing. The widget permits only loopback or private IPv4 host values; this is installation configuration, not a discoverable LAN artwork endpoint. Do not commit the owner's address.
 
 ## Verification handoff
 
 Offline checks are `npm run check`, `npm run check:art`, `npm run check:tools`, and `npm run check:browser`. The latter runs both the existing UI regression suite and Art-specific browser/cache tests. Screenshots use a bundled synthetic photo under ignored `.local/qa/art-*-public.png`. No owner's photo or diagnostic dump is included. `npm run pack:art` prepares the local shard; public unsigned widget preparation uses the existing `check:public` / `export:public` flow.
 
-Vetro import/start, root copy utilities, packaged-widget interface-address access and app-private file creation were exercised on the owner's TV. Still verify Node 4.4 independently if targeting an older runtime; private-file persistence across app/TV restart; the image against the owner's current uploaded Art photo; Home/Art visibility events and change latency; List/Dock readability and remote feel; stopped/missing bridge fallback; and cancellation under actual TV timing. Signing/install, launch and physical observation remain with the parent/owner. Native Home/startup writes are a separate task and are not part of this feature.
+Vetro import/start, root copy utilities, packaged-widget interface-address access and app-private file creation were exercised on the owner's TV. Still verify private-file persistence across app/TV restart; the image against the owner's current uploaded Art photo; Home/Art visibility events and change latency; List/Dock readability and remote feel; stopped/missing bridge fallback; and cancellation under actual TV timing. Signing/install, launch and physical observation remain with the parent/owner. Native Home/startup writes are a separate task and are not part of this feature.
