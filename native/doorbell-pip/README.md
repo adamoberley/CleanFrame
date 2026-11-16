@@ -19,10 +19,12 @@ to `pip/` beside its config. `pip/` and `pip/res` get the same checks as the art
 records each file's sha256 as it unpacks. With `pip.stream` set in the bridge config, the bridge
 subscribes to `vetro/cleanframe/doorbell` on the MQTT broker Vetro is configured for (reusing Vetro's
 saved login, with its own client id) once its HTTP listener is up, and retries every 60 s while the
-settings are missing or MQTT is off. `ring` starts the overlay as root with
-`systemd-run --unit=cleanframe-pip`, but only after the root command re-checks every file against the
-recorded hashes (`sha256sum`, or `openssl dgst -sha256` if that is missing); on any mismatch nothing
-runs and the bridge status shows `PiP start failed`. `clear` closes it early. Retained messages are
+settings are missing or MQTT is off. On `ring`, the root command copies the files into a root-only
+folder (`/run/cleanframe-pip`, 0700), checks every copy against the recorded hashes (`sha256sum`, or
+`openssl dgst -sha256` if that is missing) and starts the overlay from there with
+`systemd-run --unit=cleanframe-pip`, logging to that folder too. Nothing writable by the shard's user
+is run or appended to by root; only the stop flag stays in `pip/`, and root just checks it exists.
+On any mismatch nothing runs and the bridge status shows `PiP start failed`. `clear` closes it early. Retained messages are
 ignored, and a malformed packet just drops the connection, which reconnects after 10 s.
 
 ```json

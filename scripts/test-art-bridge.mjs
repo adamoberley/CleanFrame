@@ -234,7 +234,7 @@ async function withBridge(options, run) {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), 'cleanframe-art-'))), port = await freePort(), calls = [];
   const { config = {}, pip = true, execute = async () => ok, start = true, ...ctx } = options;
   if (pip) withPip(dir);
-  const bridge = shard({ dir, config: { get: () => ({ port, ...config }) }, execute: async (cmd, timeout) => { calls.push(cmd); return execute(cmd, timeout); }, vetroMqttPath: join(dir, 'vetro-mqtt.json'), ...ctx });
+  const bridge = shard({ dir, config: { get: () => ({ port, ...config }) }, execute: async (cmd, timeout) => { calls.push(cmd); return execute(cmd, timeout); }, vetroMqttPath: join(dir, 'vetro-mqtt.json'), pipRoot: join(dir, 'pip-root'), ...ctx });
   try { if (start) await bridge.start(); await run({ bridge, port, dir, calls }); }
   finally { await bridge.stop(); rmSync(dir, { recursive: true, force: true }); }
 }
@@ -328,13 +328,15 @@ function shellExecute(tools) {
 
 test('ring verifies the unpacked hashes as root, quotes the stream URL and reports failure', async () => {
   for (const hasher of ['sha256sum', 'openssl']) {
-    const sh = shellExecute(['rm', 'cut', hasher]);
+    const sh = shellExecute(['rm', 'cut', 'mkdir', 'cat', hasher]);
     try {
       await withBridge({ config: { pip: { stream: STREAM, seconds: 12 } }, execute: sh.execute }, async ({ bridge, dir, calls }) => {
         const out = join(dir, 'pip');
         assert.equal(await bridge._test.ring(), true, hasher);
         const cmd = calls[0];
-        for (const [name, data] of Object.entries(PIP)) assert.ok(cmd.includes(`test "$(cfsum '${join(out, name)}')" = ${sha256(data)}`), name);
+        // Root copies into its own folder and verifies and runs only those copies.
+        for (const [name, data] of Object.entries(PIP)) assert.ok(cmd.includes(`test "$(cfsum '${join(dir, 'pip-root', name)}')" = ${sha256(data)}`), name);
+        assert.ok(cmd.includes("/usr/bin/dotnet '" + join(dir, 'pip-root', 'cleanframe-pip.dll') + "'") && cmd.includes("--log '" + join(dir, 'pip-root', 'pip.log') + "'"));
         assert.ok(cmd.indexOf('cfsum \'') < cmd.indexOf('systemd-run'));
         assert.ok(cmd.includes(" --url '" + STREAM + "' --seconds 12 "));
         assert.ok(!cmd.includes('echo ok'));
@@ -349,7 +351,7 @@ test('ring verifies the unpacked hashes as root, quotes the stream URL and repor
     } finally { rmSync(sh.bin, { recursive: true, force: true }); }
   }
   // Neither hashing tool: fail closed.
-  const sh = shellExecute(['rm', 'cut']);
+  const sh = shellExecute(['rm', 'cut', 'mkdir', 'cat']);
   try {
     await withBridge({ config: { pip: { stream: STREAM } }, execute: sh.execute }, async ({ bridge }) => {
       assert.equal(await bridge._test.ring(), false); assert.equal(sh.started().length, 0);

@@ -327,17 +327,24 @@ function moduleFactory(ctx) {
   }
   // The root command that (re)starts the overlay. It fails closed: unless every unpacked file
   // still has the hash recorded at unpack time, nothing runs and the exit status is non-zero.
+  // Root copies the PiP into a root-only folder, verifies the copies there and runs (and logs)
+  // only from there, so nothing writable by the shard's user is executed or appended to by root.
+  // Only the stop flag stays in the shard's folder: root merely checks whether it exists.
+  var PIP_ROOT = '/run/cleanframe-pip';
   function ringCommand(c, d, hashes) {
-    var dll = path.join(d, PIP_DLL), stop = path.join(d, 'stop');
-    var run = '/usr/bin/env HOME=/home/owner XDG_RUNTIME_DIR=/run WAYLAND_DISPLAY=wayland-0 /usr/bin/dotnet ' + quote(dll) +
-      ' --url ' + quote(c.stream) + ' --seconds ' + c.seconds + ' --stop ' + quote(stop) + ' --log ' + quote(path.join(d, 'pip.log'));
-    var verify = Object.keys(hashes).sort().map(function (name) {
-      var file = quote(path.join(d, name));
-      return 'test ! -L ' + file + '; test -f ' + file + '; test "$(cfsum ' + file + ')" = ' + hashes[name];
+    var root = ctx.pipRoot || PIP_ROOT, stop = path.join(d, 'stop'), names = Object.keys(hashes).sort();
+    var run = '/usr/bin/env HOME=/home/owner XDG_RUNTIME_DIR=/run WAYLAND_DISPLAY=wayland-0 /usr/bin/dotnet ' + quote(path.join(root, PIP_DLL)) +
+      ' --url ' + quote(c.stream) + ' --seconds ' + c.seconds + ' --stop ' + quote(stop) + ' --log ' + quote(path.join(root, 'pip.log'));
+    var copy = 'rm -rf ' + quote(root) + '; mkdir -m 700 ' + quote(root) + ' ' + quote(path.join(root, 'res')) + '; ' + names.map(function (name) {
+      return 'cat ' + quote(path.join(d, name)) + ' > ' + quote(path.join(root, name));
+    }).join('; ');
+    var verify = names.map(function (name) {
+      var file = quote(path.join(root, name));
+      return 'test -f ' + file + '; test "$(cfsum ' + file + ')" = ' + hashes[name];
     }).join('; ');
     // A ring while it is showing restarts the timer with a fresh window.
-    return 'set -e; cfsum() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1"; else openssl dgst -sha256 -r "$1"; fi | cut -c1-64; }; ' +
-      'systemctl stop cleanframe-pip >/dev/null 2>&1 || true; rm -f ' + quote(stop) + '; ' + verify + '; ' +
+    return 'set -e; umask 077; cfsum() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1"; else openssl dgst -sha256 -r "$1"; fi | cut -c1-64; }; ' +
+      'systemctl stop cleanframe-pip >/dev/null 2>&1 || true; rm -f ' + quote(stop) + '; ' + copy + '; ' + verify + '; ' +
       'systemd-run --unit=cleanframe-pip --collect -p KillSignal=SIGKILL ' + run + ' >/dev/null 2>&1 || (setsid nohup ' + run + ' </dev/null >/dev/null 2>&1 &)';
   }
   function ring() {
