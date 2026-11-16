@@ -8,7 +8,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const jpeg = readFileSync(root + 'scripts/fixtures/art-test.jpg');
 const size = require('../vetro/cleanframe-art/index.js').jpegSize(jpeg);
-const first = createHash('sha256').update('fixture A').digest('hex'), second = createHash('sha256').update('fixture B').digest('hex');
+const first = createHash('sha256').update('fixture A').digest('hex'), second = createHash('sha256').update('fixture B').digest('hex'), third = createHash('sha256').update('fixture C').digest('hex');
 // Includes retired fields (wall, material, font, mode) that migration accepts and drops.
 const seed = { look: { bg: 'photo', wall: 'misty', source: 'art', layout: 'dock', focus: 'glass', material: 'soft', font: 'inter', apps: 'both', controls: 'both' }, mode: '15' };
 const out = root + '.local/qa/'; mkdirSync(out, { recursive: true });
@@ -97,6 +97,23 @@ try {
   await p.evaluate(() => { __visibility(true); __visibility(false); });
   await p.waitForFunction(revision => ShoreQA.state().shown.artRevision === revision, second);
   check('Returning Home installs a newer revision atomically', new Set(await artImages()).size === 1 && (await state()).writes === 0);
+  // A newer photo still loading when Visual opens: Back cancels it, and reaching Home installs it.
+  // Image decoding is held so the install is still running (a 4K decode takes a while on the TV).
+  hidden.revision = third;
+  await p.evaluate(() => {
+    const decode = HTMLImageElement.prototype.decode; window.__decodes = []; window.__holdDecode = true;
+    HTMLImageElement.prototype.decode = function () { const img = this; return new Promise((ok, fail) => { const go = () => decode.call(img).then(ok, fail); if (window.__holdDecode) window.__decodes.push(go); else go(); }); };
+  });
+  await p.waitForTimeout(5100);
+  await p.evaluate(() => { __visibility(true); __visibility(false); });
+  await p.waitForFunction(() => ShoreQA.state().pending && ShoreQA.state().pending.background);
+  await p.evaluate(() => ShoreQA.scene('appearance')); await p.evaluate(() => ShoreQA.nav('back'));
+  await p.evaluate(() => { window.__holdDecode = false; window.__decodes.splice(0).forEach(go => go()); });
+  await p.waitForTimeout(150);
+  const stillOld = (await state()).shown.artRevision === second;
+  await p.evaluate(() => ShoreQA.nav('back'));
+  await p.waitForFunction(revision => ShoreQA.state().view === 'home' && ShoreQA.state().shown.artRevision === revision, third);
+  check('A newer photo cancelled in Visual is installed on returning Home', stillOld && (await state()).writes === 0);
   await fresh({ seed: {} });
   await p.waitForFunction(() => !!ShoreQA.state().shown.artRevision);
   const defaults = (await state()).dock;

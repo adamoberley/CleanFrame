@@ -462,7 +462,6 @@ test('MQTT doorbell: one start per ring, retained and malformed messages ignored
     socket => { gate.then(() => socket.write(publish('clear'))); }
   ]);
   const errors = []; const onError = e => errors.push(e); process.on('uncaughtException', onError);
-  const timersBefore = process.getActiveResourcesInfo().filter(r => r === 'Timeout').length;
   try {
     await withBridge({ start: false, config: { pip: { stream: STREAM } }, mqttRetryMs: 50 }, async ({ bridge, dir, calls }) => {
       const stopFile = join(dir, 'pip', 'stop');
@@ -482,8 +481,8 @@ test('MQTT doorbell: one start per ring, retained and malformed messages ignored
       await until(() => b.closed === 2);
       assert.equal(bridge.status().doorbell.listening, false);
       await sleep(150); assert.equal(b.connections, 2);   // No reconnect after stop.
+      assert.deepEqual(bridge._test.mqttTimers(), { retry: false, ping: false, socket: false }); // Nothing of the bridge's own is left running.
     });
-    assert.equal(process.getActiveResourcesInfo().filter(r => r === 'Timeout').length, timersBefore);
     assert.deepEqual(errors, []);
   } finally { process.off('uncaughtException', onError); await b.close(); }
 });

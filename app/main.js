@@ -139,7 +139,11 @@
   }
   function top() { return S.stack[S.stack.length - 1]; }
   function push(e) { S.stack.push(e); return e; }
-  function pop() { if (S.stack.length > 1) S.stack.pop(); }
+  function pop() {
+    if (S.stack.length > 1) S.stack.pop();
+    // Back on Home: a newer Art photo whose install was cancelled in Visual is installed now.
+    if (artInstallCancelled && top().id === 'home') setTimeout(refreshArt, 0);
+  }
   function px(n) { return n.toFixed(2) + 'px'; }
   function icon(name, cls, underlay) {
     return '<svg class="ico' + (cls ? ' ' + cls : '') + '" viewBox="0 0 24 24" aria-hidden="true">'
@@ -796,7 +800,7 @@
   function detailOk(t, item) {
     var patch = {}, error = S.lookError;
     if (item.action === 'settings.back') { detailBack(); return; }
-    if (S.pending && S.pending.background) { cancelLook(); artInstallCancelled = true; } // refreshArt installs it on the next return Home.
+    if (S.pending && S.pending.background) { cancelLook(); artInstallCancelled = true; } // Installed on the way back to Home (pop).
     if (S.pending) return;
     if (item.action === 'settings.retry') {
       if (error && error.patch[error.row] !== undefined) detailFocus(t, choice(error.row, error.patch[error.row]), 0);

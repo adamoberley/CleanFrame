@@ -542,7 +542,7 @@ function moduleFactory(ctx) {
     status: function () { return { running: running, keyed: !!keyDigest, available: !!current, refreshing: !!inflight, error: lastError ? 'Art unavailable' : null, look: look, lookError: lookError, doorbell: { listening: pipState.connected, configured: !!pipConfig().stream, error: pipState.installError || pipState.lastError } }; },
     route: function (req, res) { res.writeHead(404); res.end(); },
     // Offline harness hooks; Vetro never calls these.
-    _test: { unpackPip: unpackPip, ring: ring, pipDir: pipDir, pipHashes: function () { return pipHashes; } }
+    _test: { unpackPip: unpackPip, ring: ring, pipDir: pipDir, pipHashes: function () { return pipHashes; }, mqttTimers: function () { return { retry: !!mqTimer, ping: !!mqPing, socket: !!mq }; } }
   };
 }
 module.exports = moduleFactory;
