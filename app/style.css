@@ -422,9 +422,9 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000}
 .cams{position:absolute;left:0;top:0;width:1920px;height:1080px}
 .cam{position:absolute;padding:0;border:0;border-radius:24px;overflow:hidden;background:#05080a;box-shadow:0 10px 30px rgba(0,0,0,.28)}
 .cam img{position:absolute;left:0;top:0;display:block;width:100%;height:100%;object-fit:contain}
-/* The still shows first; the live stream fades in over it once its first frame arrives. */
-.cam .cam-live{opacity:0;transition:opacity 200ms linear}
-.cam.is-live .cam-live{opacity:1}
+/* The live stream sits over the still and paints over it with its first frame (the TV may never
+   fire a load event for MJPEG); a failed stream hides and leaves the still. */
+.cam .cam-live.is-failed{visibility:hidden}
 .cam-name{position:absolute;left:16px;bottom:16px;padding:4px 14px;border-radius:18px;background:rgba(8,10,12,.62);font-size:26px;line-height:32px;font-weight:600;color:#f4f4f1}
 .cam.is-focus{box-shadow:0 0 0 5px rgba(255,255,255,.92),0 12px 36px rgba(0,0,0,.36)}
 .cam.is-hidden{visibility:hidden}

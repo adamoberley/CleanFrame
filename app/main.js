@@ -1510,17 +1510,20 @@
         // Streams run only where seen: every tile in the grid, only the chosen one in full screen,
         // and none while the TV player shows it.
         var wanted = document.documentElement.className.indexOf('is-avplay') < 0 && (!t.full || i === t.f.i);
-        if (!wanted && im.getAttribute('src')) { im.onload = null; im.removeAttribute('src'); b.className = b.className.replace(' is-live', ''); }
+        if (!wanted && im.getAttribute('src')) { im.onload = im.onerror = null; im.removeAttribute('src'); b.className = b.className.replace(' is-live', ''); }
         if (wanted && !still.getAttribute('src')) {
           // Instant: last saved still. Then a fresh snapshot, unless the live stream wins.
           saved = cameraMemory()[cam.src];
           if (saved && /^data:image\/jpeg;base64,/.test(saved.still || '')) still.src = saved.still;
           (function (snap) {
-            snap.onload = function () { if (snap.naturalWidth && b.className.indexOf('is-live') < 0) still.src = snap.src; };
+            snap.onload = function () { if (snap.naturalWidth) still.src = snap.src; };
             snap.src = cameraStillURL(cam);
           }(new Image()));
         }
         if (wanted && !im.getAttribute('src')) {
+          im.className = 'cam-live';
+          im.onerror = function () { im.className = 'cam-live is-failed'; };
+          // Where the browser reports frames, learn the shape and keep a still for next time.
           im.onload = function () {
             if (!im.naturalWidth || !im.naturalHeight) return;
             if (b.className.indexOf('is-live') < 0) { b.className += ' is-live'; saveStill(cam, im); }
