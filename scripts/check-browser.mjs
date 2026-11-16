@@ -785,10 +785,10 @@ try {
     await current.waitForFunction(() => !/TV lights/.test(document.getElementById('utils').textContent), null, { timeout: 4000 });
     lightStatus = 502; await act('util.lights'); await current.waitForFunction(() => /Lights unavailable/.test(document.getElementById('utils').textContent));
     check('A bridge failure says Lights unavailable', await current.evaluate(() => /Lights unavailable/.test(document.getElementById('utils').textContent)) && lightPosts.length === 3);
-    await act('util.cameras'); await current.waitForFunction(() => document.querySelectorAll('.cam img[src]').length === 3);
-    await current.waitForFunction(() => [...document.querySelectorAll('.cam img')].every(i => i.naturalWidth));
+    await act('util.cameras'); await current.waitForFunction(() => document.querySelectorAll('.cam .cam-live[src]').length === 3);
+    await current.waitForFunction(() => [...document.querySelectorAll('.cam .cam-live')].every(i => i.naturalWidth));
     await current.waitForTimeout(100);
-    const tiles = await current.evaluate(() => [...document.querySelectorAll('.cam')].map(b => { const r = b.getBoundingClientRect(), i = b.querySelector('img'); return { ratio: r.width / r.height, natural: i.naturalWidth / i.naturalHeight, area: r.width * r.height, inside: r.left >= 0 && r.top >= 0 && r.right <= 1920 && r.bottom <= 1080 }; }));
+    const tiles = await current.evaluate(() => [...document.querySelectorAll('.cam')].map(b => { const r = b.getBoundingClientRect(), i = b.querySelector('.cam-live'); return { ratio: r.width / r.height, natural: i.naturalWidth / i.naturalHeight, area: r.width * r.height, inside: r.left >= 0 && r.top >= 0 && r.right <= 1920 && r.bottom <= 1080 }; }));
     check('Camera tiles keep each stream\'s shape and all stay a usable size', tiles.every(t => Math.abs(t.ratio - t.natural) < .02 && t.inside && t.area > 200000), tiles);
     await current.evaluate(() => {
       const log = window.__avplay = [];
@@ -796,7 +796,7 @@ try {
     });
     await nav('ok'); check('OK shows one camera full screen', await current.evaluate(() => document.querySelectorAll('.cam.is-hidden').length === 2));
     await current.waitForFunction(() => document.documentElement.classList.contains('is-avplay'));
-    check('The MJPEG tiles are released while the TV player shows the camera', await current.evaluate(() => document.querySelectorAll('.cam img[src]').length === 0));
+    check('The MJPEG tiles are released while the TV player shows the camera', await current.evaluate(() => document.querySelectorAll('.cam .cam-live[src]').length === 0));
     check('Full screen plays the full-quality go2rtc HLS stream with every layer above the video clear', await current.evaluate(() => {
       const clear = el => getComputedStyle(el).backgroundColor === 'rgba(0, 0, 0, 0)';
       return window.__avplay.includes('open http://192.168.1.2:1984/api/stream.m3u8?src=doorbell_hd') && window.__avplay.includes('play') && getComputedStyle(document.getElementById('sheetBg')).visibility === 'hidden'
@@ -804,23 +804,35 @@ try {
     }), await current.evaluate(() => window.__avplay));
     await nav('right');
     check('A camera without a full-quality stream stays on its MJPEG frame', await current.evaluate(() => !document.documentElement.classList.contains('is-avplay') && window.__avplay.filter(l => l.startsWith('open')).length === 1));
-    check('Stepping in full screen streams only the camera shown', await current.evaluate(() => document.querySelectorAll('.cam img[src]').length === 1 && !!document.querySelector('.cam.is-focus img[src]')));
+    check('Stepping in full screen streams only the camera shown', await current.evaluate(() => document.querySelectorAll('.cam .cam-live[src]').length === 1 && !!document.querySelector('.cam.is-focus .cam-live[src]')));
     await current.waitForTimeout(450);
     check('A camera without a full-quality stream never opens the player after settling', await current.evaluate(() => window.__avplay.filter(l => l.startsWith('open')).length === 1));
     await nav('left');
     await current.evaluate(() => { window.webapis.avplay.prepareAsync = (ok, fail) => setTimeout(() => fail({ name: 'InvalidAccessError' }), 10); });
     await nav('back');
-    check('Back from full screen reconnects every tile', await current.evaluate(() => document.querySelectorAll('.cam img[src]').length === 3));
+    check('Back from full screen reconnects every tile', await current.evaluate(() => document.querySelectorAll('.cam .cam-live[src]').length === 3));
     await nav('ok'); await current.waitForTimeout(150);
-    check('A stream the TV cannot play stays full screen on its MJPEG frame and clears the player', await current.evaluate(() => !document.documentElement.classList.contains('is-avplay') && document.querySelectorAll('.cam img[src]').length === 1 && !!document.querySelector('.cam.is-focus img[src]') && window.__avplay.includes('close')));
+    check('A stream the TV cannot play stays full screen on its MJPEG frame and clears the player', await current.evaluate(() => !document.documentElement.classList.contains('is-avplay') && document.querySelectorAll('.cam .cam-live[src]').length === 1 && !!document.querySelector('.cam.is-focus .cam-live[src]') && window.__avplay.includes('close')));
     await nav('back');
     check('Back stops full-quality playback', await current.evaluate(() => !document.documentElement.classList.contains('is-avplay') && window.__avplay.includes('close')));
     await nav('back');
-    check('Leaving Cameras stops every stream', (await call('where')).view === 'home' && await current.evaluate(() => document.querySelectorAll('.cam img[src]').length === 0));
-    await act('util.cameras'); await current.waitForFunction(() => document.querySelectorAll('.cam img[src]').length === 3);
+    check('Leaving Cameras stops every stream', (await call('where')).view === 'home' && await current.evaluate(() => document.querySelectorAll('.cam .cam-live[src]').length === 0));
+    await act('util.cameras'); await current.waitForFunction(() => document.querySelectorAll('.cam .cam-live[src]').length === 3);
     await current.evaluate(() => window.__setHidden(true)); await current.waitForTimeout(100);
-    check('Hiding CleanFrame closes Cameras and every stream', (await call('where')).view === 'home' && await current.evaluate(() => document.querySelectorAll('.cam img[src]').length === 0));
+    check('Hiding CleanFrame closes Cameras and every stream', (await call('where')).view === 'home' && await current.evaluate(() => document.querySelectorAll('.cam .cam-live[src]').length === 0));
     await current.evaluate(() => window.__setHidden(false));
+    const layoutOf = () => current.evaluate(() => [...document.querySelectorAll('.cam')].map(b => b.style.cssText).join('|'));
+    const settled = await (async () => { await act('util.cameras'); await current.waitForFunction(() => document.querySelectorAll('.cam.is-live').length === 3); const l = await layoutOf(); await nav('back'); return l; })();
+    await current.evaluate(() => { const m = JSON.parse(localStorage.getItem('cleanframe.cameras.v1')); m.doorbell.still = 'data:image/jpeg;base64,' + 'A'.repeat(200); localStorage.setItem('cleanframe.cameras.v1', JSON.stringify(m)); });
+    await current.evaluate(() => { window.__stills = []; new MutationObserver(list => list.forEach(r => { if (r.target.classList && r.target.classList.contains('cam-still')) window.__stills.push(r.target.getAttribute('src').slice(0, 40)); })).observe(document.body, { subtree: true, attributes: true, attributeFilter: ['src'] }); });
+    await act('util.cameras');
+    const first = await layoutOf(); // Before any frame of this visit has arrived.
+    await current.waitForFunction(() => document.querySelectorAll('.cam.is-live').length === 3);
+    const stills = await current.evaluate(() => window.__stills);
+    const stillShown = stills[0] && stills[0].startsWith('data:image/jpeg') && stills.some(s => s.includes('/api/frame.jpeg'));
+    check('Cameras open in their final places from remembered shapes', first === settled, { first, settled });
+    check('A saved still shows at once, then a fresh snapshot, while the stream connects', stillShown, stills);
+    await nav('back');
   });
   section = 'Run integrity';
   report.sourceAfter = hashes();

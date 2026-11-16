@@ -43,6 +43,11 @@
      cleanframe.controls.v1 = { lights: true, go2rtc: 'http://192.168.x.y:1984', cameras: [{ name, src, full }] }.
      src is the go2rtc stream for the MJPEG grid; full, if set, is the full-quality stream for full screen.
      Without it, Home shows only Apps and Settings. */
+  // A camera's shape, as "3:4" or a number; 0 when unknown.
+  function cameraRatioValue(v) {
+    var m = typeof v === 'string' && /^(\d{1,4}):(\d{1,4})$/.exec(v), r = m ? Number(m[1]) / Number(m[2]) : Number(v);
+    return isFinite(r) && r >= 0.2 && r <= 6 ? r : 0;
+  }
   var CONTROLS = (function () {
     var c = null, out = { lights: false, go2rtc: '', cameras: [] };
     try { c = JSON.parse(localStorage.getItem('cleanframe.controls.v1')); } catch (e) { c = null; }
@@ -51,7 +56,7 @@
     if (typeof c.go2rtc === 'string' && /^http:\/\/(?:10(?:\.\d{1,3}){3}|192\.168(?:\.\d{1,3}){2}|172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2}):\d{2,5}$/.test(c.go2rtc)) out.go2rtc = c.go2rtc;
     if (out.go2rtc && Array.isArray(c.cameras)) c.cameras.slice(0, 6).forEach(function (cam) {
       if (cam && typeof cam.name === 'string' && cam.name.trim() && typeof cam.src === 'string' && /^[A-Za-z0-9_-]{1,40}$/.test(cam.src)) {
-        out.cameras.push({ name: cam.name.trim().slice(0, 40), src: cam.src, full: typeof cam.full === 'string' && /^[A-Za-z0-9_-]{1,40}$/.test(cam.full) ? cam.full : '' });
+        out.cameras.push({ name: cam.name.trim().slice(0, 40), src: cam.src, full: typeof cam.full === 'string' && /^[A-Za-z0-9_-]{1,40}$/.test(cam.full) ? cam.full : '', ratio: cameraRatioValue(cam.ratio) });
       }
     });
     return out;
@@ -445,7 +450,21 @@
       xhr.send('');
     } catch (e) { finish(false); }
   }
-  function openCameras() { push({ id: 'cameras', f: { i: 0 }, full: false, ratios: {} }); }
+  /* Cameras open in their final places at once: each camera's shape comes from its config
+     (ratio) or from the last time it was seen, and each tile shows the last still it saved,
+     then a fresh snapshot, then the live stream. Saved per stream in cleanframe.cameras.v1. */
+  var CAM_KEY = 'cleanframe.cameras.v1';
+  function cameraMemory() { var m = null; try { m = JSON.parse(localStorage.getItem(CAM_KEY)); } catch (e) { m = null; } return m && typeof m === 'object' ? m : {}; }
+  function rememberCamera(src, patch) {
+    var m = cameraMemory(), k; m[src] = m[src] || {};
+    for (k in patch) if (patch.hasOwnProperty(k)) m[src][k] = patch[k];
+    try { localStorage.setItem(CAM_KEY, JSON.stringify(m)); } catch (e) { /* Memory only: next open waits for frames. */ }
+  }
+  function openCameras() {
+    var mem = cameraMemory(), ratios = {};
+    CONTROLS.cameras.forEach(function (cam, i) { var r = cam.ratio || cameraRatioValue(mem[cam.src] && mem[cam.src].r); if (r) ratios[i] = r; });
+    push({ id: 'cameras', f: { i: 0 }, full: false, ratios: ratios });
+  }
   function openSettings() { push({ id: 'settings', f: { id: S.settingsFocus } }); }
   function openAppearance(group) {
     var axis = { layout: 'layout' }[group];
@@ -784,6 +803,16 @@
     point: function (t, z, i) { if (z === 'cam') { t.f.i = i; this.key(t, 'ok'); } }
   };
   function cameraURL(cam) { return CONTROLS.go2rtc + '/api/stream.mjpeg?src=' + encodeURIComponent(cam.src); }
+  function cameraStillURL(cam) { return CONTROLS.go2rtc + '/api/frame.jpeg?src=' + encodeURIComponent(cam.src); }
+  // A small copy of the first live frame, kept for an instant still next time. Skipped quietly
+  // where the TV will not let the page read the stream's pixels.
+  function saveStill(cam, im) {
+    try {
+      var w = 320, h = Math.round(w * im.naturalHeight / im.naturalWidth), c = document.createElement('canvas');
+      c.width = w; c.height = h; c.getContext('2d').drawImage(im, 0, 0, w, h);
+      rememberCamera(cam.src, { still: c.toDataURL('image/jpeg', 0.6) });
+    } catch (e) { /* Cross-origin frame: no still saved. */ }
+  }
   /* Full screen plays the camera's full-quality stream through the TV's own player (AVPlay, a
      hardware video layer behind the page) as go2rtc HLS: repackaged, not re-encoded. The player
      needs the avplay, network.public and tv.audio privileges and a Partner-signed package.
@@ -834,7 +863,7 @@
   function stopCameras(imagesOnly) {
     if (!imagesOnly) stopFull();
     // Dropping the src closes each MJPEG connection; nothing streams once the view is gone.
-    Array.prototype.forEach.call(sheetView.querySelectorAll('.cam img'), function (im) { im.onload = null; im.removeAttribute('src'); });
+    Array.prototype.forEach.call(sheetView.querySelectorAll('.cam .cam-live'), function (im) { im.onload = null; im.removeAttribute('src'); });
   }
   var CAM_BOX = { x: 80, y: 168, w: 1760, h: 808 }, CAM_GAP = 24;
   /* Tiles keep each camera's own shape (no crop, no bars). Every order of the cameras is
@@ -1366,7 +1395,7 @@
     settings: function () { return '<h2 class="s-title">Settings</h2><div class="settings-overview" data-slot="list"></div>'; },
     cameras: function () {
       return '<h2 class="s-title">Cameras</h2><div class="cams" data-slot="grid">' + CONTROLS.cameras.map(function (cam, i) {
-        return '<button type="button" tabindex="-1" class="cam" data-z="cam" data-i="' + i + '" data-action="cameras.' + esc(cam.src) + '"><img alt="" data-cam="' + i + '"><span class="cam-name">' + esc(cam.name) + '</span></button>';
+        return '<button type="button" tabindex="-1" class="cam" data-z="cam" data-i="' + i + '" data-action="cameras.' + esc(cam.src) + '"><img alt="" class="cam-still"><img alt="" class="cam-live" data-cam="' + i + '"><span class="cam-name">' + esc(cam.name) + '</span></button>';
       }).join('') + '</div>';
     },
     message: function (t) {
@@ -1477,17 +1506,33 @@
     cameras: function (t, el) {
       var tiles = cameraLayout(cameraRatios(t));
       Array.prototype.forEach.call(el.grid.querySelectorAll('.cam'), function (b, i) {
-        var box = t.full ? fullBox(t.ratios[i] || 16 / 9) : tiles[i], im = b.querySelector('img');
+        var box = t.full ? fullBox(t.ratios[i] || 16 / 9) : tiles[i], im = b.querySelector('.cam-live'), still = b.querySelector('.cam-still'), cam = CONTROLS.cameras[i], saved;
         // Streams run only where seen: every tile in the grid, only the chosen one in full screen,
         // and none while the TV player shows it.
         var wanted = document.documentElement.className.indexOf('is-avplay') < 0 && (!t.full || i === t.f.i);
-        if (!wanted && im.getAttribute('src')) { im.onload = null; im.removeAttribute('src'); }
-        if (wanted && !im.getAttribute('src')) {
-          // First paint of this view starts the stream; its first frame reports the real shape.
-          im.onload = function () { if (im.naturalWidth && im.naturalHeight && !t.ratios[i]) { t.ratios[i] = im.naturalWidth / im.naturalHeight; if (top() === t) render(); } };
-          im.src = cameraURL(CONTROLS.cameras[i]);
+        if (!wanted && im.getAttribute('src')) { im.onload = null; im.removeAttribute('src'); b.className = b.className.replace(' is-live', ''); }
+        if (wanted && !still.getAttribute('src')) {
+          // Instant: last saved still. Then a fresh snapshot, unless the live stream wins.
+          saved = cameraMemory()[cam.src];
+          if (saved && /^data:image\/jpeg;base64,/.test(saved.still || '')) still.src = saved.still;
+          (function (snap) {
+            snap.onload = function () { if (snap.naturalWidth && b.className.indexOf('is-live') < 0) still.src = snap.src; };
+            snap.src = cameraStillURL(cam);
+          }(new Image()));
         }
-        b.className = 'cam' + (i === t.f.i ? ' is-focus' : '') + (t.full && i !== t.f.i ? ' is-hidden' : '');
+        if (wanted && !im.getAttribute('src')) {
+          im.onload = function () {
+            if (!im.naturalWidth || !im.naturalHeight) return;
+            if (b.className.indexOf('is-live') < 0) { b.className += ' is-live'; saveStill(cam, im); }
+            var r = im.naturalWidth / im.naturalHeight;
+            if (!t.ratios[i] || Math.abs(t.ratios[i] - r) > 0.01) {
+              t.ratios[i] = r; rememberCamera(cam.src, { r: Math.round(r * 1000) / 1000 });
+              if (top() === t) render();
+            }
+          };
+          im.src = cameraURL(cam);
+        }
+        b.className = 'cam' + (i === t.f.i ? ' is-focus' : '') + (t.full && i !== t.f.i ? ' is-hidden' : '') + (im.getAttribute('src') && b.className.indexOf('is-live') >= 0 ? ' is-live' : '');
         b.style.left = box.x + 'px'; b.style.top = box.y + 'px'; b.style.width = box.w + 'px'; b.style.height = box.h + 'px';
       });
       sheetView.className = 'view' + (t.full ? ' cams-full' : '');
