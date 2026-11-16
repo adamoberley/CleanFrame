@@ -63,7 +63,7 @@ try {
   check('Sheets sit on a frosted copy of the Art photo with the same look', await p.evaluate(async () => {
     ShoreQA.scene('settings'); await new Promise(r => setTimeout(r, 120));
     const bg = document.getElementById('sheetBg'), s = getComputedStyle(bg), veil = getComputedStyle(document.querySelector('.sheet-veil'));
-    const ok = bg.classList.contains('is-frost') && /^data:image\/png/.test(bg.src) && bg.naturalWidth === 64 && s.visibility === 'visible' && /url\(/.test(s.filter) && !/blur/.test(s.filter) && veil.mixBlendMode === 'multiply';
+    const ok = bg.classList.contains('is-frost') && /^data:image\/png/.test(bg.src) && bg.naturalWidth === 160 && s.visibility === 'visible' && /url\(/.test(s.filter) && !/blur/.test(s.filter) && veil.mixBlendMode === 'multiply';
     ShoreQA.scene('home'); return ok;
   }));
   await scene('settings'); await p.waitForTimeout(250); await p.screenshot({ path: out + 'art-settings-frost-public.png' }); await scene('home');

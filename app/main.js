@@ -1529,7 +1529,7 @@
   }
   /* Sheets (Settings, Apps, Leave, ...) sit on a frosted copy of the Art photo so
      they feel like the same place. The frost is made once per photo by drawing it
-     down to 64x36; the browser's smooth upscale does the blur. No live filter. */
+     down to 160x90; the browser's smooth upscale does the blur. No live filter. */
   var frostFor = '', frostURL = '';
   function frostSheet() {
     var im = IMG.photo, src = im && im.src, mid, small;
@@ -1537,10 +1537,10 @@
     if (src !== frostFor) {
       frostFor = src; frostURL = '';
       try {
-        mid = document.createElement('canvas'); mid.width = 256; mid.height = 144;
-        mid.getContext('2d').drawImage(im, 0, 0, 256, 144);
-        small = document.createElement('canvas'); small.width = 64; small.height = 36;
-        small.getContext('2d').drawImage(mid, 0, 0, 64, 36);
+        mid = document.createElement('canvas'); mid.width = 480; mid.height = 270;
+        mid.getContext('2d').drawImage(im, 0, 0, 480, 270);
+        small = document.createElement('canvas'); small.width = 160; small.height = 90;
+        small.getContext('2d').drawImage(mid, 0, 0, 160, 90);
         frostURL = small.toDataURL('image/png');
       } catch (e) { frostURL = ''; } // A tainted or failed draw keeps the plain matte.
     }
