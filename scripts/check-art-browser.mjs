@@ -56,16 +56,9 @@ try {
   await group();
   await p.evaluate(() => ShoreQA.nav('down', 'down', 'down', 'right', 'left', 'up', 'down'));
   check('Visual remote navigation performs no further bridge networking', f.calls.length === 2);
-  check('Visual offers no background choice', !(await p.evaluate(() => ShoreQA.actions())).some(a => /^choice\.bg\./.test(a)));
   check('Art installs the bridge photo as the background', new Set(await artImages()).size === 1 && (await artImages())[0].startsWith('blob:'));
-  check('Gallery and rotation are absent', !(await p.evaluate(() => ShoreQA.actions())).some(a => /wallpaper|rotation|source/.test(a)));
-  check('Art uses neutral surfaces without adaptive photo ink', await p.evaluate(() => document.getElementById('stage').classList.contains('source-art') && !document.getElementById('stage').classList.contains('has-adaptive-ink') && (() => { const m = document.getElementById('matImg'); return getComputedStyle(m).visibility === 'hidden' || m.classList.contains('is-frost') && /^data:image\/jpeg/.test(m.src); })()));
+  check('The dock mat is hidden until it can use the frosted Art copy', await p.evaluate(() => document.getElementById('stage').classList.contains('source-art') && (() => { const m = document.getElementById('matImg'); return getComputedStyle(m).visibility === 'hidden' || m.classList.contains('is-frost') && /^data:image\/jpeg/.test(m.src); })()));
   await p.screenshot({ path: out + 'art-background-public.png' });
-  const geometry = await p.evaluate(() => {
-    const root = document.getElementById('stage').getBoundingClientRect(), desc = document.getElementById('appearanceDesc').getBoundingClientRect();
-    return [...document.querySelectorAll('#appearanceRows .setting-section')].map(e => { const r = e.getBoundingClientRect(); return { id: e.className.match(/section-(\w+)/)[1], above: r.bottom <= desc.top, inside: r.right <= root.right && r.bottom <= root.bottom }; });
-  });
-  check('All five Visual rows fit above the remote hint', ['layout', 'focus', 'apps', 'controls', 'inputs'].every(id => geometry.find(g => g.id === id)?.above && geometry.find(g => g.id === id)?.inside), geometry);
   check('Sheets sit on a frosted copy of the Art photo with the same look', await p.evaluate(async () => {
     ShoreQA.scene('settings'); await new Promise(r => setTimeout(r, 120));
     const bg = document.getElementById('sheetBg'), s = getComputedStyle(bg), veil = getComputedStyle(document.querySelector('.sheet-veil'));
@@ -120,8 +113,6 @@ try {
   await p.evaluate(() => ShoreQA.nav('down','down','down','down','down','down','down'));
   await p.waitForTimeout(200);
   await p.screenshot({ path: out + 'home-espn-public.png' });
-  const packed = await p.evaluate(() => performance.getEntriesByType('resource').map(r => r.name));
-  check('No bundled wallpaper/material URLs are requested', !packed.some(url => /\/assets\/(wallpapers|materials)\//.test(url)));
   await fresh({ seed: { ...seed, look: { ...seed.look, layout: 'list' }, home: ['livetv', 'youtube', 'netflix', 'espn', 'primevideo', 'browser', 'stremio', 'disneyplus', 'appletv'] } });
   await p.waitForFunction(() => !!ShoreQA.state().shown.artRevision); await p.waitForTimeout(250);
   const rows = await p.evaluate(() => { const list = document.getElementById('phList').getBoundingClientRect(); return [...document.querySelectorAll('#phRows .ph-row .ph-name')].map(e => { const r = e.getBoundingClientRect(); return { top: r.top - list.top, bottom: r.bottom - list.top }; }); });

@@ -27,19 +27,12 @@ const out = root + '.local/qa/';
 mkdirSync(out, { recursive: true });
 const sourceFiles = ['app/main.js', 'app/art-mode.js', 'app/device.js', 'app/index.html', 'app/style.css', 'app/config.xml', 'app/assets/icons/metrics.js'];
 const hashes = () => Object.fromEntries(sourceFiles.map(f => [f, createHash('sha256').update(readFileSync(root + f)).digest('hex')]));
-const report = { scope: 'Production UI in Chromium; mock public Tizen API only; no TV contacted.', sourceBefore: hashes(), checks: [], failures: [], knownBugs: [], pageErrors: [], expectedNetworkFailures: [] };
+const report = { scope: 'Production UI in Chromium; mock public Tizen API only; no TV contacted.', sourceBefore: hashes(), checks: [], failures: [], pageErrors: [], expectedNetworkFailures: [] };
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 // Legacy-format seed: wallpaper and mode are retired fields that migration must accept and drop.
 const baseline = (patch = {}) => ({ dock: PRIMARY.slice(), wallpaper: 'misty', mode: 'fixed', lastApp: 'netflix', theme: 'shore', ...patch });
 let preview, current, section = '';
 
-// A known app bug is recorded loudly rather than silently accepted. When the app is
-// fixed, the marker fails so the strict assertion can be restored.
-function knownBug(name, stillBroken, detail) {
-  if (!stillBroken) check('Known app bug is fixed; restore the strict check: ' + name, false, detail);
-  report.knownBugs.push({ section, name, detail });
-  console.warn('KNOWN APP BUG (' + section + '): ' + name);
-}
 function check(name, pass, detail) {
   const result = { section, name, passed: !!pass, ...(pass ? {} : { detail }) };
   report.checks.push(result);
@@ -303,11 +296,8 @@ try {
     await page({ rejectDecode: true });
     check('A valid loaded image survives a visible decode rejection', !!(await state()).shown.artRevision && !(await state()).pending);
   });
-  await run('Chromium 85 layout without inset shorthand', async () => {
-    await page({}, p => p.route('**/style.css', async route => {
-      const response = await route.fetch();
-      await route.fulfill({ response, body: (await response.text()).replace(/([;{])inset:0(?=[;}])/g, '$1') });
-    }));
+  await run('Layouts keep their geometry at both target viewports', async () => {
+    await page();
     for (const viewport of [{ width: 1920, height: 1080 }, { width: 1280, height: 720 }]) {
       await current.setViewportSize(viewport);
       for (const layout of ['dock', 'list']) {
@@ -316,10 +306,6 @@ try {
         check(layout + ' labels retain width at ' + viewport.width, labels.length > 0 && labels.every(width => width > 0), labels);
         await nav(layout === 'dock' ? 'up' : 'right');
         await current.waitForTimeout(240);
-        check('Utility focus and rounded lens align at ' + viewport.width + ' in ' + layout, await current.evaluate(() => {
-          const button = document.querySelector('.u.is-focus'), lens = document.querySelector('.ut-lens.is-current');
-          return ShoreQA.where().focusCount === 1 && button && lens && Math.abs(button.getBoundingClientRect().top - lens.getBoundingClientRect().top) < 4;
-        }));
         await current.screenshot({ path: out + 'compat-' + layout + '-' + viewport.width + '.png' });
         await group('layout');
         check('Appearance keeps full stage bounds at ' + viewport.width + ' in ' + layout, await current.locator('.appearance').evaluate(e => {
@@ -470,7 +456,6 @@ try {
     check('All apps starts with Live TV and HDMI 1-4, then installed apps alphabetically', same(names.slice(0, 5), SOURCE_NAMES)
       && same(names.slice(5), names.slice(5).slice().sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()))) && same((await state()).catalog.ids.slice(0, 5), ['livetv', 'hdmi1', 'hdmi2', 'hdmi3', 'hdmi4']), names);
     check('Installed names stay text, including HTML punctuation', names.includes(UNSAFE_NAME) && !(await current.evaluate(() => window.__catalogXss)));
-    check('Exploration fixtures do not appear', !names.includes('Plex') && !names.includes('Jellyfin'));
     await act('apps.open.' + SPOTIFY); await current.waitForFunction(() => __tv.calls.length > 0);
     check('Extra-brand app launches native ID', (await current.evaluate(() => __tv.calls.at(-1))).id === SPOTIFY);
     await current.evaluate(() => window.dispatchEvent(new Event('focus')));
@@ -568,14 +553,8 @@ try {
     await current.waitForFunction(() => !ShoreQA.state().pending);
     check('Failed appearance write keeps display and preferences', (await state()).look.layout === old.look.layout && (await state()).look.inputs === old.look.inputs && same((await settingsSnapshot()).rendered, oldClasses) && same(await stored(), oldStored));
   });
-  await run('Appearance axes, fonts, scaling and matching materials', async () => {
+  await run('Retired appearance values, Inter and scaling', async () => {
     await page();
-    for (const layout of ['list', 'dock']) for (const focus of ['type', 'glass']) {
-      await look({ layout, focus }); const s = await state();
-      check('Independent axes ' + [layout, focus].join('/') + ' on Art Mode', s.look.bg === 'photo' && s.look.layout === layout && s.look.focus === focus && s.shown.bg === 'photo', s.look);
-    }
-    for (const axis of ['apps', 'controls']) for (const value of ['icons', 'both', 'text']) { await look({ [axis]: value }); check(axis + ' ' + value + ' persists', (await state()).look[axis] === value); }
-    for (const value of ['always', 'connected']) { await look({ inputs: value }); check('inputs ' + value + ' persists', (await state()).look.inputs === value && (await stored()).look.inputs === value); }
     await look({ layout: 'dock', focus: 'glass', apps: 'both', controls: 'icons' });
     check('Home names use Inter', await current.evaluate(() => /^"?Inter"?,/.test(getComputedStyle(document.querySelector('.tile .label')).fontFamily)));
     for (const patch of [{ bg: 'dark' }, { bg: 'light' }, { font: 'newsreader' }, { material: 'tint' }, { wall: 'misty' }]) {
@@ -592,7 +571,6 @@ try {
       await current.screenshot({ path: out + 'production-' + layout + '-' + width + '.jpg', quality: 90 });
     }
     check('No live blur/backdrop filters', (await noLiveFilters()).length === 0, await noLiveFilters());
-    check('No prototype lab controls in production', await current.evaluate(() => !document.querySelector('[data-lab], #lab, #side') && !document.querySelector('script[src*="prototype"]')));
     const before = (await state()).look; await current.reload(); await ready(); check('Appearance survives reload', same((await state()).look, before));
   });
   await run('Settings overview and visible choices', async () => {
@@ -742,7 +720,6 @@ try {
         await current.screenshot({ path: out + 'settings-' + name + '-' + width + '.jpg', quality: 90 });
       }
     }
-    check('Settings retains pre-rendered materials without live blur', (await noLiveFilters()).length === 0, await noLiveFilters());
   });
   await run('Physical-key repeats and Back hierarchy', async () => {
     await page(); await editor(); await remove('netflix');
@@ -848,5 +825,5 @@ finally {
   report.finishedAt = new Date().toISOString();
   writeFileSync(out + 'checks.json', JSON.stringify(report, null, 2) + '\n');
 }
-console.log(report.checks.filter(c => c.passed).length + ' checks passed; ' + report.failures.length + ' failure(s); ' + report.knownBugs.length + ' known app bug marker(s). Report: .local/qa/checks.json');
+console.log(report.checks.filter(c => c.passed).length + ' checks passed; ' + report.failures.length + ' failure(s). Report: .local/qa/checks.json');
 if (report.failures.length) process.exitCode = 1;

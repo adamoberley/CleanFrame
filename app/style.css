@@ -321,14 +321,13 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000}
 .is-horizontal .setting-choice{flex:1;min-width:0;min-height:92px;padding:12px 20px;font-size:36px}
 .is-horizontal .setting-tick{width:26px;margin-left:0}
 .is-horizontal .setting-tick .ico{width:26px;height:26px}
-/* Visual holds five rows of choices; keep them compact enough to sit above the remote hint. */
+/* Visual holds six rows of choices; keep them compact enough to fit the stage. */
 .detail-layout .setting-section+.setting-section{margin-top:20px}
 .detail-layout.appearance .appearance-rows{top:216px}
 .detail-layout .is-horizontal .setting-choice{min-height:68px;padding:8px 18px;font-size:32px;line-height:40px}
 .setting-choice.setting-back{min-height:52px;width:auto;padding:8px 16px;border-radius:16px;font-size:28px;line-height:36px;letter-spacing:-.2px;color:var(--mute)}
 .setting-back .ico{width:24px;height:24px}
 .setting-choice.setting-back.is-focus{color:var(--solid-ink)}
-.appearance-desc{position:absolute;left:140px;top:968px;width:640px;display:flex;align-items:center;font-size:26px;line-height:36px;color:var(--mute)}
 .settings-status{position:absolute;left:858px;top:842px;width:922px;font-size:26px;line-height:36px;color:var(--mute);pointer-events:auto}
 .settings-status .setting-error{max-width:840px;color:var(--warn)}
 .setting-choice.setting-retry{width:auto;min-height:60px;margin-top:16px;padding:10px 24px;font-size:28px;line-height:36px;border-radius:16px}
@@ -401,7 +400,6 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000}
 .is-horizontal .setting-options>*+*{margin-top:0;margin-left:12px}
 .is-horizontal .setting-choice>*+*{margin-left:16px}
 .setting-choice.setting-back>*+*{margin-left:8px}
-.appearance-desc>*+*{margin-left:16px}
 .quiet-utils.is-text>*+*{margin-left:28px}
 .l-list .quiet-utils.is-text>*+*{margin-left:0}
 .l-list .quiet-utils.is-text .u-content>*+*{margin-left:0;margin-right:0}

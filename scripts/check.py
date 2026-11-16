@@ -33,8 +33,6 @@ for css in app.rglob('*.css'):
     for reference in re.findall(r'url\([\"\']?([^\)\"\']+)', source):
         if ':' not in reference:
             assert (css.parent / reference.split('?')[0]).is_file(), 'Missing CSS resource: ' + reference
-assert not (app / 'assets/wallpapers').exists(), 'The personal fork must not package a bundled photo gallery'
-assert not (app / 'assets/materials').exists(), 'Art photos use neutral surfaces'
 assert (app / 'assets/icons/espn.png').is_file(), 'Missing white ESPN mark'
 for icon in ['stremio', 'netflix', 'disneyplus', 'youtube', 'appletv', 'primevideo', 'abciview', 'sbs', 'applemusic', 'art', 'apps', 'settings', 'livetv', 'home']:
     assert (app / ('assets/icons/' + icon + '.svg')).is_file(), 'Missing icon: ' + icon

@@ -966,7 +966,7 @@
   var utilFocusLabel = $('utilFocusLabel'), utilFocusKey = '', appFocusName = $('appFocusName');
   var dock = $('dock'), shelf = $('shelf'), track = $('track'), plate = $('plate'), dockEmpty = $('dockEmpty');
   var cueL = $('cueL'), cueR = $('cueR');
-  var focusStatus = $('focusStatus'), sceneEl = $('scene'), appearanceEl = $('appearance'), appearanceRows = $('appearanceRows'), appearanceDesc = $('appearanceDesc');
+  var focusStatus = $('focusStatus'), sceneEl = $('scene'), appearanceEl = $('appearance'), appearanceRows = $('appearanceRows');
   var appearanceBack = $('appearanceBack'), appearanceTitle = $('appearanceTitle'), appearanceStatus = $('appearanceStatus');
   var phList = $('phList'), phRows = $('phRows'), phEmpty = $('phEmpty');
   var phPlates = [$('phPlate'), $('phPlateAlt')], photoPlateIndex = 0, photoPlateKey = null;
@@ -1325,7 +1325,6 @@
         + command({ action: 'settings.retry', label: 'Try again' }, '<span>Try again</span>', 'setting-retry');
     }
     setHTML(appearanceStatus, status);
-    setHTML(appearanceDesc, ''); // No remote-key hints: the focused control is the cue.
   }
   /* Keep the retry or membership state on the focused control. The stage-level line
      shares its position without changing the control's identity or key behaviour. */
