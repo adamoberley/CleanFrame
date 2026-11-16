@@ -178,7 +178,6 @@ namespace CleanFramePip
             _until = DateTime.UtcNow.AddSeconds(seconds);
             _http = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
             new Thread(Reader) { IsBackground = true, Name = "mjpeg" }.Start();
-            if (_stop != null) try { File.Delete(_stop); } catch (Exception) { }
 
             SetupEnvironment();
             Efl.elm_init(0, IntPtr.Zero);

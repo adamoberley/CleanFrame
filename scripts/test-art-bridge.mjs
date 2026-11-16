@@ -42,6 +42,7 @@ async function harness(run, options = {}) {
     if (hold) await hold;
     if (cmd.startsWith('head -c 65537 ')) return { stdout: input.toString('base64'), stderr: '', exit_code: 0, timed_out: false };
     assert.match(cmd, /^set -e; test ! -L /); assert.ok(!cmd.includes('base64'));
+    if (cmd.includes('copy-')) { assert.ok(!cmd.includes('chmod')); assert.match(cmd, /; chown -h \d+:\d+ '/); } // Root never follows a swapped-in symlink.
     const quoted = [...cmd.matchAll(/'([^']*)'/g)].map(m => m[1]);
     const target = quoted.find(p => /copy-\d+-\d+\.tmp$/.test(p));
     assert.ok(target.startsWith(dir + '/art-cache/'));
@@ -471,6 +472,7 @@ test('MQTT doorbell: one start per ring, retained and malformed messages ignored
       assert.deepEqual(b.subscribed.slice(0, 1), ['vetro/cleanframe/doorbell']);
       assert.equal(calls.filter(c => c.includes('systemd-run')).length, 1);
       assert.ok(calls[0].includes(" --url '" + STREAM + "' "));
+      assert.doesNotMatch(calls[0], /rm -f '[^']*\/pip\/stop'/);   // Root never deletes in the shard's folder.
       assert.equal(existsSync(stopFile), false);           // The retained 'clear' was ignored.
       assert.equal(b.closed, 1);                           // The malformed packet dropped the first session only.
       secondSession();

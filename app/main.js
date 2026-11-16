@@ -277,10 +277,12 @@
       source: 'art',
       bg: 'photo', layout: pick(modern.layout, LOOK_VALUES.layout, legacyList ? 'list' : 'dock'),
       apps: pick(modern.apps, LOOK_VALUES.apps, legacyList ? 'text' : 'both'), controls: pick(modern.controls, LOOK_VALUES.controls, 'both'),
-      focus: pick(modern.focus, LOOK_VALUES.focus, legacyList ? 'type' : 'glass'), inputs: pick(modern.inputs, LOOK_VALUES.inputs, 'connected'), clock: pick(modern.clock, LOOK_VALUES.clock, 'time'),
+      focus: pick(modern.focus, LOOK_VALUES.focus, legacyList ? 'type' : 'glass'), inputs: pick(modern.inputs, LOOK_VALUES.inputs, 'connected'), clock: weatherClock(pick(modern.clock, LOOK_VALUES.clock, 'time')),
       home: h, recent: recent, lastApp: h.indexOf(s.lastApp) >= 0 ? s.lastApp : h[0]
     };
   }
+  // With weather is offered only where a location is set; otherwise a saved choice shows the clock.
+  function weatherClock(v) { return v === 'weather' && !readWeather() ? 'time' : v; }
   function serialise(c) {
     var out = {};
     Object.keys(c).forEach(function (key) { out[key] = c[key]; });
@@ -469,11 +471,33 @@
     var mem = cameraMemory(), ratios = {};
     CONTROLS.cameras.forEach(function (cam, i) { var r = cameraRatioValue(mem[cam.src] && mem[cam.src].r) || cam.ratio; if (r) ratios[i] = r; });
     push({ id: 'cameras', f: { i: 0 }, full: false, ratios: ratios });
+    clearInterval(camTick); camTicks = 0; camTick = setInterval(cameraTick, 10000);
+  }
+  /* While Cameras is open: every 10 s, retry snapshots that failed; every 60 s, reconnect each
+     live stream behind a fresh snapshot. A stream that stalls without an error (Wi-Fi blip,
+     go2rtc restarting) would otherwise freeze on its last frame, since the TV reports no frames. */
+  var camTick = 0, camTicks = 0;
+  function cameraTick() {
+    if (top().id !== 'cameras' || document.hidden) { clearInterval(camTick); camTick = 0; return; }
+    if (++camTicks % 6) { if (sheetView.querySelector('.cam .cam-still:not([src])')) render(); return; }
+    Array.prototype.forEach.call(sheetView.querySelectorAll('.cam'), function (b, i) {
+      var im = b.querySelector('.cam-live'), still = b.querySelector('.cam-still'), cam = CONTROLS.cameras[i];
+      if (!im.getAttribute('src') || b._snap) return;
+      b._snap = new Image();
+      b._snap.onload = function () {
+        var snap = b._snap; b._snap = null;
+        if (!snap || !snap.naturalWidth || !im.getAttribute('src')) return;
+        still.src = snap.src; b.className = b.className.replace(' is-live', '');
+        clearTimeout(b._retry); im.removeAttribute('src'); im.className = 'cam-live'; im.src = cameraURL(cam, true);
+      };
+      b._snap.onerror = function () { b._snap = null; };
+      b._snap.src = cameraStillURL(cam);
+    });
   }
   function openSettings() { push({ id: 'settings', f: { id: S.settingsFocus } }); }
   function openAppearance(group) {
-    var axis = { layout: 'layout' }[group];
-    var action = S.detailFocus[group] || (axis ? 'choice.' + axis + '.' + S.c[axis] : 'samsung.home');
+    // Visual (layout) is the only group: focus starts on the remembered row or the current layout.
+    var action = S.detailFocus[group] || 'choice.layout.' + S.c.layout;
     push({ id: 'appearance', group: group, f: { action: action } });
   }
   function openMessage(key) { push({ id: 'message', msg: key, f: { b: 0 } }); }
@@ -807,7 +831,8 @@
     },
     point: function (t, z, i) { if (z === 'cam') { t.f.i = i; this.key(t, 'ok'); } }
   };
-  function cameraURL(cam) { return CONTROLS.go2rtc + '/api/stream.mjpeg?src=' + encodeURIComponent(cam.src); }
+  // fresh: a reconnect needs a new URL, or the browser may keep the stalled connection.
+  function cameraURL(cam, fresh) { return CONTROLS.go2rtc + '/api/stream.mjpeg?src=' + encodeURIComponent(cam.src) + (fresh ? '&t=' + Date.now() : ''); }
   // Unique per request: the browser would otherwise reuse the first snapshot on every later open.
   function cameraStillURL(cam) { return CONTROLS.go2rtc + '/api/frame.jpeg?src=' + encodeURIComponent(cam.src) + '&t=' + Date.now(); }
   /* Full screen plays the camera's full-quality stream through the TV's own player (AVPlay, a
@@ -825,16 +850,17 @@
   }
   // While the TV's player shows a camera, the MJPEG tiles behind it are released so no
   // decoder runs unseen; they reconnect when the player stops.
-  function setFullClass(on) {
+  function setFullClass(on, leaving) {
     var root = document.documentElement, was = root.className.indexOf('is-avplay') >= 0;
     root.className = root.className.replace(/ ?is-avplay/g, '') + (on ? ' is-avplay' : '');
     if (on && !was) stopCameras(true);
-    else if (!on && was && top().id === 'cameras') render();
+    else if (!on && was && !leaving && top().id === 'cameras') render();
   }
-  function stopFull() {
+  // leaving: Cameras is closing, so the tiles are not reconnected behind the player.
+  function stopFull(leaving) {
     full.token++; clearTimeout(full.settle);
     if (avplay()) { try { avplay().stop(); } catch (e) { /* Not playing. */ } try { avplay().close(); } catch (e) { /* Not open. */ } }
-    setFullClass(false);
+    setFullClass(false, leaving);
   }
   function startFull(t) {
     var cam = CONTROLS.cameras[t.f.i], token;
@@ -858,7 +884,7 @@
     });
   }
   function stopCameras(imagesOnly) {
-    if (!imagesOnly) stopFull();
+    if (!imagesOnly) { clearInterval(camTick); camTick = 0; stopFull(true); }
     // Dropping the src closes each MJPEG connection; nothing streams once the view is gone.
     Array.prototype.forEach.call(sheetView.querySelectorAll('.cam'), function (b) {
       var im = b.querySelector('.cam-live');
@@ -1038,12 +1064,13 @@
      cleanframe.weather.v1 = { lat, lon, unit: 'f' | 'c' }; without it the option is not offered.
      Fetched at most every 20 minutes while the clock shows weather, only from the minute clock
      tick or a settings change, never from a key press; the last reading is kept. */
-  var WEATHER = (function () {
+  var WEATHER = readWeather();
+  function readWeather() {
     var w = null;
     try { w = JSON.parse(localStorage.getItem('cleanframe.weather.v1')); } catch (e) { w = null; }
     if (!w || typeof w.lat !== 'number' || typeof w.lon !== 'number' || Math.abs(w.lat) > 90 || Math.abs(w.lon) > 180) return null;
     return { lat: Math.round(w.lat * 100) / 100, lon: Math.round(w.lon * 100) / 100, unit: w.unit === 'c' ? 'c' : 'f' };
-  }());
+  }
   var weatherNow = null, weatherAt = 0, weatherBusy = false;
   try { weatherNow = JSON.parse(localStorage.getItem('cleanframe.weather.last')); } catch (e) { weatherNow = null; }
   function weatherKind(code) {
@@ -1544,7 +1571,7 @@
             im.className = 'cam-live is-failed'; clearTimeout(b._retry);
             b._retry = setTimeout(function () {
               if (!im.getAttribute('src') || !document.body.contains(im)) return;
-              im.removeAttribute('src'); im.className = 'cam-live'; im.src = cameraURL(cam);
+              im.removeAttribute('src'); im.className = 'cam-live'; im.src = cameraURL(cam, true);
             }, 10000);
           };
           // Where the browser reports frames (not the TV, for MJPEG), hide the still and learn the shape.
@@ -1806,7 +1833,9 @@
     if (code === 9) { ev.preventDefault(); return; }
     if (!k || ev.metaKey || ev.ctrlKey || ev.altKey) return;
     ev.preventDefault();
-    if (k === 'ok' || k === 'back') { if (ev.repeat || heldKeys[code]) return; heldKeys[code] = true; }
+    // A held OK or Back acts once. Each repeat renews the mark, so a lost keyup frees the key
+    // 1 s after its last event instead of blocking it until the app loses focus.
+    if (k === 'ok' || k === 'back') { var last = heldKeys[code]; heldKeys[code] = Date.now(); if (ev.repeat || (last && Date.now() - last < 1000)) return; }
     else { holdArrow(code, k); if (ev.repeat || heldKeys[code]) return; heldKeys[code] = true; rapidMove(); } // KEYS maps only arrows besides OK/Back.
     press(k);
   });
@@ -1862,7 +1891,6 @@
     out.focusAction = focusedAction(); out.writes = S.writes; out.failedWrites = S.failed; out.error = S.err;
     out.catalog = { loading: catalog.loading, loaded: catalog.loaded, error: catalog.error, ids: ALPHA.slice() };
     out.visibleHome = visibleHome(); out.inputPorts = homeSources.ports;
-    out.fonts = { loaded: true, baselineFallback: false }; // The system font needs no loading.
     out.settingsGroup = t.id === 'appearance' ? t.group : null;
     out.focusedChoice = item && item.axis ? { axis: item.axis, value: item.value, action: item.action } : null;
     out.candidate = out.focusedChoice ? { axis: item.axis, value: item.value, action: item.action, pending: !!S.pending } : null;

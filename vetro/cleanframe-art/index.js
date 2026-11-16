@@ -257,7 +257,8 @@ function moduleFactory(ctx) {
         '; test "$(readlink -f ' + quote(source) + ')" = ' + quote(source) +
         '; test "$(readlink -f ' + quote(dir) + ')" = ' + quote(dir) +
         '; umask 077; set -C; head -c ' + (MAX_IMAGE + 1) + ' ' + quote(source) + ' > ' + quote(tmp) +
-        '; chmod 600 ' + quote(tmp) + '; chown ' + process.getuid() + ':' + process.getgid() + ' ' + quote(tmp);
+        // umask already made it 600; chown -h never follows a symlink swapped in after the copy.
+        '; chown -h ' + process.getuid() + ':' + process.getgid() + ' ' + quote(tmp);
       return execute(cmd).then(function () {
         active(g);
         var st = fs.lstatSync(tmp), bytes, size, revision, dest;
@@ -366,7 +367,8 @@ function moduleFactory(ctx) {
   // still has the hash recorded at unpack time, nothing runs and the exit status is non-zero.
   // Root copies the PiP into a root-only folder, verifies the copies there and runs (and logs)
   // only from there, so nothing writable by the shard's user is executed or appended to by root.
-  // Only the stop flag stays in the shard's folder: root merely checks whether it exists.
+  // Only the stop flag stays in the shard's folder: root (the overlay) only checks whether it
+  // exists, and the shard itself removes it before each ring, so root deletes nothing there.
   // Before starting it stops both a systemd-run overlay and a fallback setsid one (pkill, when
   // present), and keeps the previous run's log as pip.log.1.
   var PIP_ROOT = '/run/cleanframe-pip';
@@ -387,7 +389,7 @@ function moduleFactory(ctx) {
     return 'set -e; umask 077; cfsum() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1"; else openssl dgst -sha256 -r "$1"; fi | cut -c1-64; }; ' +
       'systemctl stop cleanframe-pip >/dev/null 2>&1 || true; ' +
       'if command -v pkill >/dev/null 2>&1; then pkill -f ' + quote(pkillPattern(path.join(root, PIP_DLL))) + ' >/dev/null 2>&1 || true; fi; ' +
-      'rm -f ' + quote(stop) + '; ' + copy + '; ' + verify + '; ' +
+      copy + '; ' + verify + '; ' +
       'systemd-run --unit=cleanframe-pip --collect -p KillSignal=SIGKILL ' + run + ' >/dev/null 2>&1 || (setsid nohup ' + run + ' </dev/null >/dev/null 2>&1 &)';
   }
   function ring() {
@@ -396,6 +398,9 @@ function moduleFactory(ctx) {
     if (!hashes || !hashes[PIP_DLL] || !fs.existsSync(path.join(d, PIP_DLL))) { pipState.lastError = 'PiP not installed'; return null; }
     if (now - pipState.ringing < ringInterval) return null;
     pipState.ringing = now;
+    // A clear from the last ring must not close this one. If it cannot be removed, the overlay
+    // closes at once and the next ring tries again.
+    try { unlink(path.join(d, 'stop')); } catch (e) { pipState.lastError = 'PiP stop flag stuck'; }
     return execute(ringCommand(c, d, hashes))
       .then(function () { pipState.lastError = null; return true; }, function () { pipState.lastError = 'PiP start failed'; return false; });
   }

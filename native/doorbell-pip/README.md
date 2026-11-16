@@ -23,7 +23,8 @@ settings are missing or MQTT is off. On `ring`, the root command copies the file
 folder (`/run/cleanframe-pip`, 0700), checks every copy against the recorded hashes (`sha256sum`, or
 `openssl dgst -sha256` if that is missing) and starts the overlay from there with
 `systemd-run --unit=cleanframe-pip`, logging to that folder too. Nothing writable by the shard's user
-is run or appended to by root; only the stop flag stays in `pip/`: root checks whether it exists and deletes it when starting a new overlay.
+is run, appended to or deleted by root; only the stop flag stays in `pip/`. The overlay only checks
+whether it exists, and the bridge itself removes it before each ring.
 On any mismatch nothing runs and the bridge status shows `PiP start failed`. `clear` closes it early. Retained messages are
 ignored, and a malformed packet just drops the connection, which reconnects after 10 s.
 

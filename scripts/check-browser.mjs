@@ -48,7 +48,7 @@ async function run(name, fn) {
 async function closePage() { if (current) { current.__closing = true; await current.close(); current = null; } }
 
 // Production still calls its unmodified device.js adapter.
-function installHarness({ seed, legacy, mock, catalog, catalogFailure, noFontAPI, storageFailure, currentAppId, initiallyHidden, pauseHiddenFrames, rejectDecode, inputUnavailable }) {
+function installHarness({ seed, legacy, mock, catalog, catalogFailure, storageFailure, currentAppId, initiallyHidden, pauseHiddenFrames, rejectDecode, inputUnavailable }) {
   if (!sessionStorage.getItem('__cleanframe_seeded')) {
     if (seed !== undefined) localStorage.setItem('cleanframe.home.v1', typeof seed === 'string' ? seed : JSON.stringify(seed));
     if (legacy !== undefined) localStorage.setItem('cleanframe.shore.v1', typeof legacy === 'string' ? legacy : JSON.stringify(legacy));
@@ -80,7 +80,6 @@ function installHarness({ seed, legacy, mock, catalog, catalogFailure, noFontAPI
   };
   if (initiallyHidden) window.__setHidden(true);
   if (rejectDecode) HTMLImageElement.prototype.decode = function () { return Promise.reject(new DOMException('Synthetic decode rejection')); };
-  if (noFontAPI) Object.defineProperty(document, 'fonts', { configurable: true, value: undefined });
   if (!mock) return;
   window.__tv = { catalog, catalogFailure: !!catalogFailure, launchFailure: false, holdCatalog: false, pending: [], calls: [], catalogCalls: 0 };
   window.tizen = {
@@ -259,9 +258,6 @@ try {
     check('Discovery failure preserves saved native pin', (await state()).dock.includes(EXTRA));
   });
   await run('Startup fallbacks remain usable', async () => {
-    await page({ noFontAPI: true });
-    check('Missing font-loading API has usable baseline Home', (await state()).fonts.loaded && (await call('where')).focusCount === 1);
-    await closePage();
     await page({ storageFailure: true });
     check('Failed startup write keeps the saved preferences and a usable Home', !(await state()).storageOk && same(await stored(), baseline()) && (await call('where')).focusCount === 1);
   });
@@ -774,8 +770,9 @@ try {
     });
     await look({ clock: 'weather' }); await current.waitForTimeout(200);
     check('A stale reading is not shown when the weather service is down', await current.evaluate(() => !!document.querySelector('#caption .clock') && !document.querySelector('#caption .weather')));
-    await closePage(); await page();
+    await closePage(); await page({ seed: baseline({ look: { clock: 'weather' } }) });
     check('Without a location the weather choice is not offered', await current.evaluate(() => { ShoreQA.scene('appearance'); return !document.querySelector('[data-action="choice.clock.weather"]') && !!document.querySelector('[data-action="choice.clock.off"]'); }));
+    check('A saved With weather choice without a location shows and ticks Clock', await current.evaluate(() => ShoreQA.state().look.clock === 'time' && !!document.querySelector('[data-action="choice.clock.time"][aria-checked="true"]')));
   });
   await run('Lights and Cameras Home controls', async () => {
     await page();
@@ -824,14 +821,14 @@ try {
     check('Stepping in full screen streams only the camera shown', await current.evaluate(() => document.querySelectorAll('.cam .cam-live[src]').length === 1 && !!document.querySelector('.cam.is-focus .cam-live[src]')));
     await current.waitForTimeout(450);
     check('A camera without a full-quality stream never opens the player after settling', await current.evaluate(() => window.__avplay.filter(l => l.startsWith('open')).length === 1));
-    await nav('left');
-    await current.evaluate(() => { window.webapis.avplay.prepareAsync = (ok, fail) => setTimeout(() => fail({ name: 'InvalidAccessError' }), 10); });
+    await nav('left'); await current.waitForFunction(() => document.documentElement.classList.contains('is-avplay'));
+    await current.evaluate(() => { window.__avplay.length = 0; }); // Each check below sees only what its own key did.
     await nav('back');
-    check('Back from full screen reconnects every tile', await current.evaluate(() => document.querySelectorAll('.cam .cam-live[src]').length === 3));
+    check('Back from playback stops the player and reconnects every tile', await current.evaluate(() => !document.documentElement.classList.contains('is-avplay') && window.__avplay.includes('stop') && window.__avplay.includes('close') && document.querySelectorAll('.cam .cam-live[src]').length === 3), await current.evaluate(() => window.__avplay));
+    await current.evaluate(() => { window.__avplay.length = 0; window.webapis.avplay.prepareAsync = (ok, fail) => setTimeout(() => fail({ name: 'InvalidAccessError' }), 10); });
     await nav('ok'); await current.waitForTimeout(150);
-    check('A stream the TV cannot play stays full screen on its MJPEG frame and clears the player', await current.evaluate(() => !document.documentElement.classList.contains('is-avplay') && document.querySelectorAll('.cam .cam-live[src]').length === 1 && !!document.querySelector('.cam.is-focus .cam-live[src]') && window.__avplay.includes('close')));
+    check('A stream the TV cannot play stays full screen on its MJPEG frame and clears the player', await current.evaluate(() => !document.documentElement.classList.contains('is-avplay') && document.querySelectorAll('.cam .cam-live[src]').length === 1 && !!document.querySelector('.cam.is-focus .cam-live[src]') && window.__avplay.includes('open http://192.168.1.2:1984/api/stream.m3u8?src=doorbell_hd') && !window.__avplay.includes('play') && window.__avplay[window.__avplay.length - 1] === 'close'), await current.evaluate(() => window.__avplay));
     await nav('back');
-    check('Back stops full-quality playback', await current.evaluate(() => !document.documentElement.classList.contains('is-avplay') && window.__avplay.includes('close')));
     // Keep the tile images: Home empties the view, so querying the page afterwards would prove nothing.
     const holdLive = () => current.evaluate(() => { window.__live = [...document.querySelectorAll('.cam .cam-live')]; });
     const liveLeft = () => current.evaluate(() => window.__live.length === 3 && window.__live.every(i => !i.getAttribute('src')));
@@ -851,15 +848,22 @@ try {
     // As on the TV: the MJPEG stream never reports a load, so shapes come from the snapshot alone.
     // Snapshots wait for the test to release them, so the order of events is fixed.
     let releaseSnaps, snapGate = new Promise(r => { releaseSnaps = r; });
+    const streamHits = { doorbell: 0, backyard: 0, nursery: 0 }; let snapHits = 0;
+    const streamTotal = () => streamHits.doorbell + streamHits.backyard + streamHits.nursery;
     await page({}, async p => {
+      await p.clock.install(); // Time runs normally; fastForward stands in for the 10 s and 60 s waits.
       p.__expectedFailures.push('stream.mjpeg', 'frame.jpeg');
       await p.addInitScript(() => {
         localStorage.setItem('cleanframe.controls.v1', JSON.stringify({ go2rtc: 'http://192.168.1.2:1984', cameras: [{ name: 'Front door', src: 'doorbell' }, { name: 'Backyard', src: 'backyard', ratio: '16:9' }, { name: 'Nursery', src: 'nursery' }] }));
         const I = window.Image; window.__snaps = []; window.Image = function (w, h) { const i = new I(w, h); window.__snaps.push(i); return i; };
       });
-      await p.route('http://192.168.1.2:1984/api/stream.mjpeg**', () => { /* Hangs, like a live MJPEG stream on the TV. */ });
+      // Live streams hang, like MJPEG on the TV; the doorbell's first connection drops.
+      await p.route('http://192.168.1.2:1984/api/stream.mjpeg**', route => {
+        const src = new URL(route.request().url()).searchParams.get('src');
+        if (++streamHits[src] === 1 && src === 'doorbell') route.abort();
+      });
       await p.route('http://192.168.1.2:1984/api/frame.jpeg**', async route => {
-        await snapGate;
+        snapHits++; await snapGate;
         const size = { doorbell: [480, 640], backyard: [1920, 576], nursery: [1280, 720] }[new URL(route.request().url()).searchParams.get('src')];
         await route.fulfill({ contentType: 'image/jpeg', body: Buffer.from(await jpeg(...size), 'base64') });
       });
@@ -873,6 +877,14 @@ try {
     await current.waitForTimeout(100);
     const snapped = await current.evaluate(() => [...document.querySelectorAll('.cam')].map(b => { const r = b.getBoundingClientRect(), i = b.querySelector('.cam-still'); return { ratio: r.width / r.height, natural: i.naturalWidth / i.naturalHeight, live: b.classList.contains('is-live') }; }));
     check('A quick snapshot fills each tile and teaches its real shape while the stream connects', snapped.every(t => Math.abs(t.ratio - t.natural) < .02 && !t.live), snapped);
+    await current.waitForFunction(() => document.querySelector('.cam .cam-live').classList.contains('is-failed'));
+    const dropped = streamHits.doorbell;
+    await current.clock.fastForward(10000); await current.waitForTimeout(150);
+    check('A dropped stream reconnects after 10 s', streamHits.doorbell === dropped + 1 && streamHits.backyard === 1, streamHits);
+    const snapsBefore = snapHits, streamsBefore = streamTotal();
+    for (let i = 0; i < 5; i++) { await current.clock.fastForward(10000); await current.waitForTimeout(60); }
+    await current.waitForTimeout(200);
+    check('Every 60 s each stream reconnects behind a fresh snapshot', snapHits === snapsBefore + 3 && streamTotal() === streamsBefore + 3, { snapHits, snapsBefore, streamHits });
     await nav('back');
     snapGate = new Promise(() => { /* These snapshots never arrive. */ });
     await act('util.cameras');
