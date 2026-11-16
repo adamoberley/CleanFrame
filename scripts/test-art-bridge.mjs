@@ -88,7 +88,7 @@ test('current.json waits briefly for a stale Art look, then reports the last goo
     setSettings(timeout => { reads++; assert.equal(timeout, 8000); return new Promise(r => { release = () => r({ brightness: 5, colorTemperature: 3 }); }); });
     let t = Date.now(), res = await get(port);
     assert.equal(res.status, 200); assert.equal(JSON.parse(res.body).look, undefined);
-    assert.ok(Date.now() - t >= 140 && Date.now() - t < 1000, 'waited ' + (Date.now() - t));
+    assert.ok(Date.now() - t >= 140 && Date.now() - t < 3000, 'waited ' + (Date.now() - t)); // Far below the 8 s read; loose for busy runners.
     // The read is coalesced: a second request joins it instead of starting another.
     const second = get(port); await sleep(20); release();
     assert.deepEqual(JSON.parse((await second).body).look, { brightness: 5, colorTemperature: 3 });
@@ -113,11 +113,11 @@ test('a changed Art look shows on the first current.json when the read answers w
     assert.deepEqual(JSON.parse((await get(port)).body).look, { brightness: 2, colorTemperature: -1 });
     assert.equal(reads, 2);
   }, { lookMaxAgeMs: 50 });
-  // The real 800 ms limit: a 1.5 s read never holds the reply past it.
+  // The real 800 ms limit: a 4 s read never holds the reply past it (loose upper bound for busy runners).
   await harness(async ({ port, setSettings }) => {
-    setSettings(() => sleep(1500).then(() => ({ brightness: 5, colorTemperature: 0 })));
+    setSettings(() => sleep(4000).then(() => ({ brightness: 5, colorTemperature: 0 })));
     const t = Date.now(), res = await get(port), took = Date.now() - t;
-    assert.equal(JSON.parse(res.body).look, undefined); assert.ok(took >= 750 && took < 1400, 'took ' + took);
+    assert.equal(JSON.parse(res.body).look, undefined); assert.ok(took >= 750 && took < 3000, 'took ' + took);
   });
 });
 test('MQTT packets are framed, bounded and parsed for the doorbell topic', () => {

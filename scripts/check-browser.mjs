@@ -283,6 +283,12 @@ try {
         check(layout + ' labels retain width at ' + viewport.width, labels.length > 0 && labels.every(width => width > 0), labels);
         await nav(layout === 'dock' ? 'up' : 'right');
         await current.waitForTimeout(240);
+        check('Utility focus and rounded lens align at ' + viewport.width + ' in ' + layout, await current.evaluate(() => {
+          const button = document.querySelector('.u.is-focus'), lens = document.querySelector('.ut-lens.is-current');
+          if (ShoreQA.where().focusCount !== 1 || !button || !lens) return false;
+          const b = button.getBoundingClientRect(), l = lens.getBoundingClientRect();
+          return Math.abs(b.top - l.top) < 4;
+        }));
         await current.screenshot({ path: out + 'compat-' + layout + '-' + viewport.width + '.png' });
         await group('layout');
         check('Appearance keeps full stage bounds at ' + viewport.width + ' in ' + layout, await current.locator('.appearance').evaluate(e => {
@@ -855,7 +861,7 @@ try {
     // As on the TV: the MJPEG stream never reports a load, so shapes come from the snapshot alone.
     // Snapshots wait for the test to release them, so the order of events is fixed.
     let releaseSnaps, snapGate = new Promise(r => { releaseSnaps = r; });
-    const streamHits = { doorbell: 0, backyard: 0, nursery: 0 }; let snapHits = 0;
+    const streamHits = { doorbell: 0, backyard: 0, nursery: 0 }, snapDown = new Set(); let snapHits = 0;
     const streamTotal = () => streamHits.doorbell + streamHits.backyard + streamHits.nursery;
     await page({}, async p => {
       await p.clock.install(); // Time runs normally; fastForward stands in for the 10 s and 60 s waits.
@@ -871,6 +877,7 @@ try {
       });
       await p.route('http://192.168.1.2:1984/api/frame.jpeg**', async route => {
         snapHits++; await snapGate;
+        if (snapDown.has(new URL(route.request().url()).searchParams.get('src'))) { await route.fulfill({ status: 503, body: 'offline' }); return; }
         const size = { doorbell: [480, 640], backyard: [1920, 576], nursery: [1280, 720] }[new URL(route.request().url()).searchParams.get('src')];
         await route.fulfill({ contentType: 'image/jpeg', body: Buffer.from(await jpeg(...size), 'base64') });
       });
@@ -886,18 +893,30 @@ try {
     check('A quick snapshot fills each tile and teaches its real shape while the stream connects', snapped.every(t => Math.abs(t.ratio - t.natural) < .02 && !t.live), snapped);
     await current.waitForFunction(() => document.querySelector('.cam .cam-live').classList.contains('is-failed'));
     const dropped = streamHits.doorbell;
-    await current.clock.fastForward(10000); await current.waitForTimeout(150);
-    check('A dropped stream reconnects after 10 s', streamHits.doorbell === dropped + 1 && streamHits.backyard === 1, streamHits);
+    const settle = async (done, ms = 3000) => { const end = Date.now() + ms; while (!done() && Date.now() < end) await current.waitForTimeout(25); };
+    const snapsAtDrop = snapHits;
+    await current.clock.fastForward(10000); await settle(() => streamHits.doorbell > dropped && snapHits > snapsAtDrop); await current.waitForTimeout(100);
+    check('A dropped stream reconnects after 10 s, with a snapshot to check the camera', streamHits.doorbell === dropped + 1 && streamHits.backyard === 1 && snapHits === snapsAtDrop + 1 && !(await current.evaluate(() => document.querySelector('.cam').classList.contains('is-offline'))), { streamHits, snapHits });
     const snapsBefore = snapHits, streamsBefore = streamTotal();
-    for (let i = 0; i < 5; i++) { await current.clock.fastForward(10000); await current.waitForTimeout(60); }
-    await current.waitForTimeout(200);
+    for (let i = 0; i < 5; i++) { await current.clock.fastForward(10000); await current.waitForTimeout(30); }
+    await settle(() => snapHits >= snapsBefore + 3 && streamTotal() >= streamsBefore + 3); await current.waitForTimeout(100);
     check('Every 60 s each stream reconnects behind a fresh snapshot', snapHits === snapsBefore + 3 && streamTotal() === streamsBefore + 3, { snapHits, snapsBefore, streamHits });
+    const offline = () => current.evaluate(() => [...document.querySelectorAll('.cam')].map(b => b.classList.contains('is-offline')));
+    snapDown.add('backyard');
+    for (let i = 0; i < 6; i++) { await current.clock.fastForward(10000); await current.waitForTimeout(30); }
+    await settle(() => false, 400);
+    const down = await offline(), label = await current.evaluate(() => getComputedStyle(document.querySelectorAll('.cam .cam-name')[1], '::after').content);
+    check('A camera whose snapshot fails shows Offline with its last picture dimmed', same(down, [false, true, false]) && /Offline/.test(label), { down, label });
+    snapDown.clear(); const recheck = snapHits;
+    await current.clock.fastForward(10000); await settle(() => snapHits > recheck); await current.waitForTimeout(150);
+    check('An Offline camera is rechecked within 10 s and clears when it answers', same(await offline(), [false, false, false]) && snapHits === recheck + 1, await offline());
     await nav('back');
     snapGate = new Promise(() => { /* These snapshots never arrive. */ });
+    await current.evaluate(() => { window.__mark = window.__snaps.length; });
     await act('util.cameras');
     const learned = await backyardRatio();
     check('A learned shape wins over the configured one on the next open', Math.abs(learned - 1920 / 576) < .02, learned);
-    await current.evaluate(() => { window.__live = [...document.querySelectorAll('.cam .cam-live')]; window.__pending = window.__snaps.filter(i => /frame\.jpeg/.test(i.src) && !i.naturalWidth); });
+    await current.evaluate(() => { window.__live = [...document.querySelectorAll('.cam .cam-live')]; window.__pending = window.__snaps.slice(window.__mark).filter(i => /frame\.jpeg/.test(i.src)); });
     await nav('back');
     const cancelled = await current.evaluate(() => ({ snaps: window.__pending.map(i => [i.getAttribute('src'), !!i.onload]), live: window.__live.map(i => i.getAttribute('src')) }));
     check('Leaving Cameras cancels pending snapshots and streams', cancelled.snaps.length === 3 && cancelled.snaps.every(([src, on]) => !src && !on) && cancelled.live.every(src => !src), cancelled);

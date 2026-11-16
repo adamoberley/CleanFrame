@@ -473,8 +473,8 @@
     push({ id: 'cameras', f: { i: 0 }, full: false, ratios: ratios });
     clearInterval(camTick); camTicks = 0; camTick = setInterval(cameraTick, 10000);
   }
-  /* While Cameras is open: every 10 s, retry snapshots that failed; every 60 s, reconnect each
-     live stream behind a fresh snapshot. A stream that stalls without an error (Wi-Fi blip,
+  /* While Cameras is open: every 10 s, retry snapshots that failed and recheck Offline tiles;
+     every 60 s, reconnect each live stream behind a fresh snapshot. A stream that stalls without an error (Wi-Fi blip,
      go2rtc restarting) would otherwise freeze on its last frame, since the TV reports no frames. */
   var camTick = 0, camTicks = 0;
   // One snapshot per tile at a time. It is abandoned after 8 s, so a hung request cannot block
@@ -487,6 +487,12 @@
     snap.onerror = function () { end(); fail(); };
     snap.src = cameraStillURL(cam);
   }
+  // A tile whose latest snapshot failed says Offline and dims its last picture, so an old frame
+  // never passes for live. Any later snapshot (or, where reported, a live frame) clears it.
+  function cameraOffline(b, on) {
+    var has = b.className.indexOf(' is-offline') >= 0;
+    if (on && !has) b.className = b.className.replace(' is-live', '') + ' is-offline'; else if (!on && has) b.className = b.className.replace(' is-offline', '');
+  }
   // A camera's real shape, learned from a snapshot or frame: remembered and laid out at once.
   function learnCamera(t, i, r) {
     if (t.ratios[i] && Math.abs(t.ratios[i] - r) <= 0.01) return;
@@ -495,10 +501,11 @@
   }
   function cameraTick() {
     if (top().id !== 'cameras' || document.hidden) { clearInterval(camTick); camTick = 0; return; }
-    if (++camTicks % 6) { if (sheetView.querySelector('.cam .cam-still:not([src])')) render(); return; }
+    var all = !(++camTicks % 6);
     Array.prototype.forEach.call(sheetView.querySelectorAll('.cam'), function (b, i) {
       var im = b.querySelector('.cam-live'), still = b.querySelector('.cam-still'), cam = CONTROLS.cameras[i];
-      if (!im.getAttribute('src') || b._snap) return;
+      // Every minute every tile; every 10 s the ones showing Offline, so a camera that is back clears soon.
+      if (!im.getAttribute('src') || b._snap || (!all && b.className.indexOf(' is-offline') < 0)) return;
       // The stream reconnects either way; a fresh snapshot, when it comes, covers the switch.
       function reconnect() {
         if (!im.getAttribute('src')) return;
@@ -506,9 +513,10 @@
         clearTimeout(b._retry); im.removeAttribute('src'); im.className = 'cam-live'; im.src = cameraURL(cam, true);
       }
       takeSnapshot(b, cam, function (snap) {
-        still.src = snap.src; learnCamera(top(), i, snap.naturalWidth / snap.naturalHeight); reconnect();
-      }, reconnect);
+        still.src = snap.src; cameraOffline(b, false); learnCamera(top(), i, snap.naturalWidth / snap.naturalHeight); reconnect();
+      }, function () { cameraOffline(b, true); reconnect(); });
     });
+    if (!all && sheetView.querySelector('.cam .cam-still:not([src])')) render(); // Retries snapshots that never arrived.
   }
   function openSettings() { push({ id: 'settings', f: { id: S.settingsFocus } }); }
   function openAppearance(group) {
@@ -1565,7 +1573,7 @@
         // A plain JPEG snapshot shows something quickly and tells us the camera's shape. One that
         // failed is tried again by the 10 s camera tick (requests at least 9 s apart), not on every redraw.
         if (wanted && !still.getAttribute('src') && !b._snap && !(Date.now() - (b._snapAt || 0) < 9000)) {
-          takeSnapshot(b, cam, function (snap) { still.src = snap.src; learnCamera(t, i, snap.naturalWidth / snap.naturalHeight); }, function () {});
+          takeSnapshot(b, cam, function (snap) { still.src = snap.src; cameraOffline(b, false); learnCamera(t, i, snap.naturalWidth / snap.naturalHeight); }, function () { cameraOffline(b, true); });
         }
         if (wanted && !im.getAttribute('src')) {
           im.className = 'cam-live';
@@ -1575,17 +1583,20 @@
             b._retry = setTimeout(function () {
               if (!im.getAttribute('src') || !document.body.contains(im)) return;
               im.removeAttribute('src'); im.className = 'cam-live'; im.src = cameraURL(cam, true);
+              // A snapshot alongside tells whether the camera itself is reachable.
+              if (!b._snap) takeSnapshot(b, cam, function (snap) { still.src = snap.src; cameraOffline(b, false); }, function () { cameraOffline(b, true); });
             }, 10000);
           };
           // Where the browser reports frames (not the TV, for MJPEG), hide the still and learn the shape.
           im.onload = function () {
             if (!im.naturalWidth || !im.naturalHeight) return;
             if (b.className.indexOf('is-live') < 0) b.className += ' is-live';
+            cameraOffline(b, false);
             learnCamera(t, i, im.naturalWidth / im.naturalHeight);
           };
           im.src = cameraURL(cam);
         }
-        b.className = 'cam' + (i === t.f.i ? ' is-focus' : '') + (t.full && i !== t.f.i ? ' is-hidden' : '') + (im.getAttribute('src') && b.className.indexOf('is-live') >= 0 ? ' is-live' : '');
+        b.className = 'cam' + (i === t.f.i ? ' is-focus' : '') + (t.full && i !== t.f.i ? ' is-hidden' : '') + (im.getAttribute('src') && b.className.indexOf('is-live') >= 0 ? ' is-live' : '') + (b.className.indexOf(' is-offline') >= 0 ? ' is-offline' : '');
         b.style.left = box.x + 'px'; b.style.top = box.y + 'px'; b.style.width = box.w + 'px'; b.style.height = box.h + 'px';
       });
       sheetView.className = 'view' + (t.full ? ' cams-full' : '');

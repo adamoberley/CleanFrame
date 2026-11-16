@@ -426,6 +426,10 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000}
    fire a load event for MJPEG); a failed stream hides and leaves the still. */
 .cam .cam-live.is-failed{visibility:hidden}
 .cam.is-live .cam-still{visibility:hidden}
+/* Offline: the last picture dims under an Offline label instead of passing for live. */
+.cam.is-offline .cam-still{filter:grayscale(1) brightness(.45)}
+.cam.is-offline .cam-live{visibility:hidden}
+.cam.is-offline .cam-name::after{content:' · Offline'}
 .cam-name{position:absolute;left:16px;bottom:16px;padding:4px 14px;border-radius:18px;background:rgba(8,10,12,.62);font-size:26px;line-height:32px;font-weight:600;color:#f4f4f1}
 .cam.is-focus{box-shadow:0 0 0 5px rgba(255,255,255,.92),0 12px 36px rgba(0,0,0,.36)}
 .cam.is-hidden{visibility:hidden}
