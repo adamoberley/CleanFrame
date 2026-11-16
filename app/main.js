@@ -1525,6 +1525,28 @@
     if (bundle && bundle.artURL) window.FrameArt.retain(bundle.artURL);
     phFields.concat(utFields).forEach(function (el) { var p = el._placement; if (p) fieldTransform(el, p.x, p.y, p.width, p.height); });
     S.wallShown = look.wall; S.wallPending = null; S.wallError = null;
+    if (bundle) setTimeout(frostSheet, 0);
+  }
+  /* Sheets (Settings, Apps, Leave, ...) sit on a frosted copy of the Art photo so
+     they feel like the same place. The frost is made once per photo by drawing it
+     down to 64x36; the browser's smooth upscale does the blur. No live filter. */
+  var frostFor = '', frostURL = '';
+  function frostSheet() {
+    var im = IMG.photo, src = im && im.src, mid, small;
+    if (!src || !im.naturalWidth || S.c.source !== 'art') { IMG.bg.className = 'sheet-bg'; return; }
+    if (src !== frostFor) {
+      frostFor = src; frostURL = '';
+      try {
+        mid = document.createElement('canvas'); mid.width = 256; mid.height = 144;
+        mid.getContext('2d').drawImage(im, 0, 0, 256, 144);
+        small = document.createElement('canvas'); small.width = 64; small.height = 36;
+        small.getContext('2d').drawImage(mid, 0, 0, 64, 36);
+        frostURL = small.toDataURL('image/png');
+      } catch (e) { frostURL = ''; } // A tainted or failed draw keeps the plain matte.
+    }
+    if (!frostURL) { IMG.bg.className = 'sheet-bg'; return; }
+    if (IMG.bg.getAttribute('src') !== frostURL) IMG.bg.src = frostURL;
+    IMG.bg.className = 'sheet-bg is-frost';
   }
   function cleanPatch(patch) {
     var out = {}, k;
