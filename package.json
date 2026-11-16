@@ -11,7 +11,6 @@
     "tv:install": "python3 scripts/tv.py install",
     "tv:launch": "python3 scripts/tv.py launch",
     "check:browser": "node scripts/check-browser.mjs && node scripts/check-art-browser.mjs",
-    "dev:public": "python3 scripts/preview.py --public-fonts",
     "export:public": "python3 scripts/export-public.py",
     "check:public": "python3 scripts/check-public.py",
     "check:tools": "python3 -B scripts/test-tools.py",

@@ -17,8 +17,6 @@ for tag in ['content', 'icon']:
     node = manifest.find('w:' + tag, ns)
     assert node is not None and (app / node.get('src', '')).is_file(), 'Missing ' + tag + ' file'
 assert all((app / name).is_file() for name in ['main.js', 'style.css'])
-for reference in ['assets/font-catalog.js']:
-    assert (app / reference).is_file(), 'Missing runtime catalogue: ' + reference
 for filename in ['index.html']:
     source = (app / filename).read_text()
     pattern = r'(?:src|href)=[\"\']([^\"\']+)' if filename.endswith('.html') else r'from\s+[\"\']([^\"\']+)'

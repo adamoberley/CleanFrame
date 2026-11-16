@@ -7,7 +7,7 @@ import hashlib
 import json
 import subprocess
 
-from font_assets import ROOT
+from widget import ROOT
 from private_files import private_path, secret_content
 
 
