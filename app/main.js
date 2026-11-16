@@ -503,22 +503,31 @@
     t.ratios[i] = r; rememberCamera(CONTROLS.cameras[i].src, { r: Math.round(r * 1000) / 1000 });
     if (top() === t) render();
   }
+  function cameraWanted(t, i) { return document.documentElement.className.indexOf('is-avplay') < 0 && (!t.full || i === t.f.i); }
+  /* Reconnect a tile's stream behind a fresh snapshot. go2rtc is plain HTTP/1.1, so the browser
+     opens at most six connections to it, and six live tiles would hold them all: the tile's own
+     stream is closed first (and kept closed while paused), then the snapshot, then the stream
+     reconnects whatever the snapshot's outcome. */
+  function refreshTile(b, i) {
+    var im = b.querySelector('.cam-live'), still = b.querySelector('.cam-still'), cam = CONTROLS.cameras[i];
+    clearTimeout(b._retry); im.removeAttribute('src'); im.className = 'cam-live'; b.className = b.className.replace(' is-live', '');
+    b._paused = true;
+    function reconnect() {
+      var t = top(); b._paused = false;
+      if (t.id === 'cameras' && cameraWanted(t, i) && !im.getAttribute('src') && document.body.contains(im)) im.src = cameraURL(cam);
+    }
+    if (b._snap) { reconnect(); return; }
+    takeSnapshot(b, cam, function (snap) {
+      still.src = snap.src; cameraOffline(b, false); learnCamera(top(), i, snap.naturalWidth / snap.naturalHeight); reconnect();
+    }, function () { cameraOffline(b, true); reconnect(); });
+  }
   function cameraTick() {
     if (top().id !== 'cameras' || document.hidden) { clearInterval(camTick); camTick = 0; return; }
     var all = !(++camTicks % 6);
     Array.prototype.forEach.call(sheetView.querySelectorAll('.cam'), function (b, i) {
-      var im = b.querySelector('.cam-live'), still = b.querySelector('.cam-still'), cam = CONTROLS.cameras[i];
       // Every minute every tile; every 10 s the ones showing Offline, so a camera that is back clears soon.
-      if (!im.getAttribute('src') || b._snap || (!all && b.className.indexOf(' is-offline') < 0)) return;
-      // The stream reconnects either way; a fresh snapshot, when it comes, covers the switch.
-      function reconnect() {
-        if (!im.getAttribute('src')) return;
-        b.className = b.className.replace(' is-live', '');
-        clearTimeout(b._retry); im.removeAttribute('src'); im.className = 'cam-live'; im.src = cameraURL(cam);
-      }
-      takeSnapshot(b, cam, function (snap) {
-        still.src = snap.src; cameraOffline(b, false); learnCamera(top(), i, snap.naturalWidth / snap.naturalHeight); reconnect();
-      }, function () { cameraOffline(b, true); reconnect(); });
+      if (!b.querySelector('.cam-live').getAttribute('src') || b._snap || (!all && b.className.indexOf(' is-offline') < 0)) return;
+      refreshTile(b, i);
     });
     if (!all && sheetView.querySelector('.cam .cam-still:not([src])')) render(); // Retries snapshots that never arrived.
   }
@@ -1572,24 +1581,20 @@
         var box = t.full ? fullBox(t.ratios[i] || 16 / 9) : tiles[i], im = b.querySelector('.cam-live'), still = b.querySelector('.cam-still'), cam = CONTROLS.cameras[i];
         // Streams run only where seen: every tile in the grid, only the chosen one in full screen,
         // and none while the TV player shows it.
-        var wanted = document.documentElement.className.indexOf('is-avplay') < 0 && (!t.full || i === t.f.i);
+        var wanted = cameraWanted(t, i);
         if (!wanted && im.getAttribute('src')) { clearTimeout(b._retry); im.onload = im.onerror = null; im.removeAttribute('src'); b.className = b.className.replace(' is-live', ''); }
         // A plain JPEG snapshot shows something quickly and tells us the camera's shape. One that
         // failed is tried again by the 10 s camera tick (requests at least 9 s apart), not on every redraw.
         if (wanted && !still.getAttribute('src') && !b._snap && !(Date.now() - (b._snapAt || 0) < 9000)) {
           takeSnapshot(b, cam, function (snap) { still.src = snap.src; cameraOffline(b, false); learnCamera(t, i, snap.naturalWidth / snap.naturalHeight); }, function () { cameraOffline(b, true); });
         }
-        if (wanted && !im.getAttribute('src')) {
+        if (wanted && !im.getAttribute('src') && !b._paused) {
           im.className = 'cam-live';
           // A stream that drops (camera offline, go2rtc restarting) reconnects every 10 s while shown.
           im.onerror = function () {
             im.className = 'cam-live is-failed'; clearTimeout(b._retry);
-            b._retry = setTimeout(function () {
-              if (!im.getAttribute('src') || !document.body.contains(im)) return;
-              im.removeAttribute('src'); im.className = 'cam-live'; im.src = cameraURL(cam);
-              // A snapshot alongside tells whether the camera itself is reachable.
-              if (!b._snap) takeSnapshot(b, cam, function (snap) { still.src = snap.src; cameraOffline(b, false); }, function () { cameraOffline(b, true); });
-            }, 10000);
+            // Its snapshot also tells whether the camera itself is reachable.
+            b._retry = setTimeout(function () { if (im.getAttribute('src') && document.body.contains(im)) refreshTile(b, i); }, 10000);
           };
           // Where the browser reports frames (not the TV, for MJPEG), hide the still and learn the shape.
           im.onload = function () {
@@ -1712,11 +1717,12 @@
     }
     return out;
   }
-  function cancelLook() {
-    // A bridge read cut off here (for example by Back in Visual) is started again on reaching Home.
+  // A bridge read cut off (Back in Visual, hiding) is started again on reaching or showing Home.
+  function cancelArt() {
     if (artRefreshing) { artRefreshing = false; artRefreshCancelled = true; }
-    window.FrameArt.cancel(); lookToken++; S.pending = null; S.lookError = null;
+    window.FrameArt.cancel();
   }
+  function cancelLook() { cancelArt(); lookToken++; S.pending = null; S.lookError = null; }
   function setLook(patch, options) {
     var opts = options || {}, changes = cleanPatch(patch), target = lookOf(S.c), k, token, needs, changed, loadedBundle = null, imageDone, failed = false;
     for (k in changes) if (changes.hasOwnProperty(k)) target[k] = changes[k];
@@ -1896,7 +1902,7 @@
     heldKeys = {}; stopHold();
     if (document.hidden) {
       if (S.pending) cancelLook();
-      else window.FrameArt.cancel();
+      else cancelArt();
       FrameDevice.cancelSource(); syncHomeSources(); clearTimeout(clockTimer);
       if (top().id === 'cameras') { stopCameras(); pop(); render(); } }
     else {

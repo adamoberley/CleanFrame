@@ -865,7 +865,7 @@ try {
     // As on the TV: the MJPEG stream never reports a load, so shapes come from the snapshot alone.
     // Snapshots wait for the test to release them, so the order of events is fixed.
     let releaseSnaps, snapGate = new Promise(r => { releaseSnaps = r; });
-    const streamHits = { doorbell: 0, backyard: 0, nursery: 0 }, snapDown = new Set(); let snapHits = 0;
+    const streamHits = { doorbell: 0, backyard: 0, nursery: 0 }, snapDown = new Set(), liveAtSnap = []; let snapHits = 0, watchSnaps = false;
     const streamTotal = () => streamHits.doorbell + streamHits.backyard + streamHits.nursery;
     await page({}, async p => {
       await p.clock.install(); // Time runs normally; fastForward stands in for the 10 s and 60 s waits.
@@ -880,7 +880,10 @@ try {
         if (++streamHits[src] === 1 && src === 'doorbell') route.abort();
       });
       await p.route('http://192.168.1.2:1984/api/frame.jpeg**', async route => {
-        snapHits++; await snapGate;
+        snapHits++;
+        // Whether the tile's own stream was still open when its snapshot was asked for.
+        if (watchSnaps) liveAtSnap.push(await p.evaluate(i => !!document.querySelectorAll('.cam .cam-live')[i].getAttribute('src'), ['doorbell', 'backyard', 'nursery'].indexOf(new URL(route.request().url()).searchParams.get('src'))));
+        await snapGate;
         if (snapDown.has(new URL(route.request().url()).searchParams.get('src'))) { await route.fulfill({ status: 503, body: 'offline' }); return; }
         const size = { doorbell: [480, 640], backyard: [1920, 576], nursery: [1280, 720] }[new URL(route.request().url()).searchParams.get('src')];
         await route.fulfill({ contentType: 'image/jpeg', body: Buffer.from(await jpeg(...size), 'base64') });
@@ -901,10 +904,12 @@ try {
     const snapsAtDrop = snapHits;
     await current.clock.fastForward(10000); await settle(() => streamHits.doorbell > dropped && snapHits > snapsAtDrop); await current.waitForTimeout(100);
     check('A dropped stream reconnects after 10 s, with a snapshot to check the camera', streamHits.doorbell === dropped + 1 && streamHits.backyard === 1 && snapHits === snapsAtDrop + 1 && !(await current.evaluate(() => document.querySelector('.cam').classList.contains('is-offline'))), { streamHits, snapHits });
-    const snapsBefore = snapHits, streamsBefore = streamTotal();
+    const snapsBefore = snapHits, streamsBefore = streamTotal(); watchSnaps = true;
     for (let i = 0; i < 5; i++) { await current.clock.fastForward(10000); await current.waitForTimeout(30); }
     await settle(() => snapHits >= snapsBefore + 3 && streamTotal() >= streamsBefore + 3); await current.waitForTimeout(100);
     check('Every 60 s each stream reconnects behind a fresh snapshot', snapHits === snapsBefore + 3 && streamTotal() === streamsBefore + 3, { snapHits, snapsBefore, streamHits });
+    check('A tile closes its own stream before its snapshot (six cameras would hold all six HTTP/1.1 connections)', liveAtSnap.length === 3 && liveAtSnap.every(open => !open), liveAtSnap);
+    watchSnaps = false;
     const offline = () => current.evaluate(() => [...document.querySelectorAll('.cam')].map(b => b.classList.contains('is-offline')));
     snapDown.add('backyard');
     for (let i = 0; i < 6; i++) { await current.clock.fastForward(10000); await current.waitForTimeout(30); }

@@ -160,7 +160,7 @@ test('loopback HTTP contract, opaque CORS, immutable revisions, coalescing and r
     const pending = [get(h.port), get(h.port)];
     await new Promise(r => setImmediate(r)); release();
     const [a, b] = await Promise.all(pending); h.setHold(null);
-    assert.equal(a.status, 200); assert.deepEqual(a, b);
+    assert.equal(a.status, 200); assert.equal(b.status, 200); assert.deepEqual(a.body, b.body); // Not the Date header, which can cross a second.
     const meta = JSON.parse(a.body); assert.deepEqual(Object.keys(meta).sort(), ['contentId','height','imageUrl','revision','width']);
     assert.equal(h.calls.length, 3); assert.equal(a.headers['access-control-allow-origin'], 'null'); assert.equal(a.headers['cache-control'], 'no-store');
     const image = await get(h.port, meta.imageUrl); assert.deepEqual(image.body, jpeg); assert.match(image.headers['cache-control'], /immutable/);
