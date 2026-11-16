@@ -1703,9 +1703,26 @@
     if (!k || ev.metaKey || ev.ctrlKey || ev.altKey) return;
     ev.preventDefault();
     if (k === 'ok' || k === 'back') { if (ev.repeat || heldKeys[code]) return; heldKeys[code] = true; }
+    else if (ARROWS[k]) { holdArrow(code, k); if (ev.repeat || heldKeys[code]) return; heldKeys[code] = true; rapidMove(); }
     else rapidMove();
     press(k);
   });
+  /* A held arrow repeats sooner and steadier than the TV's own auto-repeat:
+     first repeat after HOLD_DELAY, then every HOLD_RATE. The TV's repeat events
+     only prove the key is still down; if they stop (a lost keyup), so does this. */
+  var ARROWS = { up: 1, down: 1, left: 1, right: 1 }, HOLD_DELAY = 280, HOLD_RATE = 110, HOLD_SILENCE = 1200, hold = null;
+  function holdArrow(code, k) {
+    var now = Date.now();
+    if (hold && hold.code === code) { hold.seen = now; return; }
+    stopHold();
+    hold = { code: code, key: k, seen: now, timer: null };
+    hold.timer = setTimeout(function step() {
+      if (!hold || Date.now() - hold.seen > HOLD_SILENCE) { stopHold(); return; }
+      rapidMove(); press(hold.key);
+      if (hold) hold.timer = setTimeout(step, HOLD_RATE);
+    }, HOLD_DELAY);
+  }
+  function stopHold() { if (hold) { clearTimeout(hold.timer); delete heldKeys[hold.code]; } hold = null; }
   /* Held or fast arrow presses skip the focus spring so the pill keeps up, then
      the spring returns once movement pauses. Class only: no layout or re-render. */
   var lastMoveAt = 0, rapidTimer = null;
@@ -1715,11 +1732,11 @@
     lastMoveAt = now; clearTimeout(rapidTimer);
     rapidTimer = setTimeout(function () { root.className = root.className.replace(/ ?is-rapid/, ''); }, 380);
   }
-  document.addEventListener('keyup', function (ev) { delete heldKeys[ev.keyCode]; });
-  window.addEventListener('blur', function () { heldKeys = {}; });
+  document.addEventListener('keyup', function (ev) { delete heldKeys[ev.keyCode]; if (hold && hold.code === ev.keyCode) stopHold(); });
+  window.addEventListener('blur', function () { heldKeys = {}; stopHold(); });
   window.addEventListener('focus', function () { FrameDevice.cancelSource(); release(); refreshInputsOnReturn(); focusStage(); after(); updateClock(); refreshArt(); });
   document.addEventListener('visibilitychange', function () {
-    heldKeys = {};
+    heldKeys = {}; stopHold();
     if (document.hidden) {
       if (S.pending && S.pending.target.source === 'art') cancelLook();
       else window.FrameArt.cancel();

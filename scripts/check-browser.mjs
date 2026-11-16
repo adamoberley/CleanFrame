@@ -708,6 +708,12 @@ try {
     check('Held Back closes one layer only', (await call('where')).view === 'settings' && (await state()).focusAction === 'settings.editor');
     await current.keyboard.up('Escape'); await current.keyboard.press('Escape');
     check('Released Back reaches Home', (await call('where')).view === 'home');
+    const startAt = (await call('where')).focusAction, next = (await state()).look.layout === 'list' ? 'ArrowDown' : 'ArrowRight';
+    await current.keyboard.down(next); await current.waitForTimeout(200);
+    const early = (await call('where')).focusAction;
+    await current.waitForTimeout(450); await current.keyboard.up(next);
+    const held = (await call('where')).focusAction; await current.waitForTimeout(300);
+    check('Held arrow moves at once, repeats from 280 ms and stops on release', early !== startAt && held !== early && (await call('where')).focusAction === held, { startAt, early, held });
   });
   section = 'Run integrity';
   report.sourceAfter = hashes();
