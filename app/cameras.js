@@ -86,7 +86,6 @@
       if (!n) return;
       clearTimeout(s.retry); n.live.removeAttribute('src'); n.live.className = 'cam-live'; s.live = false; s.paused = true;
       function reconnect() { s.paused = false; if (showing() && document.body.contains(n.b)) host.render(); }
-      if (s.snap) { reconnect(); return; }
       snapshot(i, function (img) {
         n.still.src = img.src; setOffline(i, false); learn(host.top(), i, img.naturalWidth / img.naturalHeight); reconnect();
       }, function () { setOffline(i, true); reconnect(); });
@@ -217,6 +216,7 @@
       if (k === 'back') { if (t.full) { t.full = false; stopFull(); } else { stop(); host.pop(); } return; }
       if (k === 'ok') { t.full = !t.full; if (t.full) startFull(t); else stopFull(); return; }
       if (t.full) {
+        if (n < 2) return; // One camera: nothing to step to, and the player keeps playing.
         // Stepping shows the next camera's MJPEG at once; the TV player starts only once the
         // choice settles, so holding an arrow never opens and closes the player per step.
         t.f.i = k === 'left' || k === 'up' ? (t.f.i + n - 1) % n : (t.f.i + 1) % n;

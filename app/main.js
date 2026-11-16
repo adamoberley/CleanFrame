@@ -1217,7 +1217,7 @@
     settings: function () { return '<h2 class="s-title">Settings</h2><div class="settings-overview" data-slot="list"></div>'; },
     cameras: function () {
       return '<h2 class="s-title">Cameras</h2><div class="cams" data-slot="grid">' + CONTROLS.cameras.map(function (cam, i) {
-        return '<button type="button" tabindex="-1" class="cam" data-z="cam" data-i="' + i + '" data-action="cameras.' + esc(cam.src) + '"><img alt="" class="cam-still"><img alt="" class="cam-live" data-cam="' + i + '"><span class="cam-name">' + esc(cam.name) + '</span></button>';
+        return '<button type="button" tabindex="-1" class="cam" data-z="cam" data-i="' + i + '" data-action="cameras.' + esc(cam.src) + '"><img alt="" class="cam-still"><img alt="" class="cam-live"><span class="cam-name">' + esc(cam.name) + '</span></button>';
       }).join('') + '</div>';
     },
     message: function (t) {
