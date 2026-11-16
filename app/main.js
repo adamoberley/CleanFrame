@@ -571,20 +571,44 @@
       this.key(t, 'ok');
     }
   };
+  /* List Home moves sideways by screen position: Right picks the Apps/Settings
+     control level with the focused row, Left the visible row level with the control. */
+  function centreY(el) { var r = el && el.getBoundingClientRect(); return r && r.height ? r.top + r.height / 2 : null; }
+  function nearestUtil(row, U) {
+    var y = centreY(document.querySelector('#phRows .ph-row[data-i="' + row + '"]')), best = clamp(S.lastUtil, 0, U.length - 1), gap = Infinity;
+    if (y === null) return best;
+    Array.prototype.forEach.call(document.querySelectorAll('#utils .u[data-z="util"]'), function (b) {
+      var d = Math.abs(centreY(b) - y), n = Number(b.getAttribute('data-i'));
+      if (n < U.length && d < gap) { gap = d; best = n; }
+    });
+    return best;
+  }
+  function nearestRow(u, row, n) {
+    var y = centreY(document.querySelector('#utils .u[data-z="util"][data-i="' + u + '"]')), best = row, gap = Infinity, list = document.getElementById('phList').getBoundingClientRect();
+    if (y === null) return row;
+    Array.prototype.forEach.call(document.querySelectorAll('#phRows .ph-row'), function (el) {
+      var c = centreY(el), i = Number(el.getAttribute('data-i')), d;
+      if (c === null || i >= n || c < list.top + 48 || c > list.bottom - 48) return; // Only rows actually on screen.
+      d = Math.abs(c - y);
+      if (d < gap) { gap = d; best = i; }
+    });
+    return best;
+  }
   function listHomeKey(t, k, i, U) {
     var f = t.f, h = visibleHome();
     if (f.zone === 'util') {
       f.u = clamp(f.u, 0, U.length - 1);
       if (k === 'up' && f.u > 0) f.u--;
       else if (k === 'down' && f.u < U.length - 1) f.u++;
-      else if (k === 'left' || k === 'back') f.zone = 'apps';
+      else if (k === 'back') f.zone = 'apps';
+      else if (k === 'left') { f.zone = 'apps'; if (h.length) setSel(h[nearestRow(f.u, i, h.length)]); }
       else if (k === 'ok') { S.lastUtil = f.u; utilAction(U[f.u]); return; }
       S.lastUtil = f.u;
       return;
     }
     f.zone = 'apps';
     if (k === 'up' && i > 0) setSel(h[i - 1]);
-    else if (k === 'right') { f.zone = 'util'; f.u = clamp(S.lastUtil, 0, U.length - 1); }
+    else if (k === 'right') { f.zone = 'util'; f.u = nearestUtil(i, U); }
     else if (k === 'down' && i < h.length - 1) setSel(h[i + 1]);
     else if (k === 'back') openMessage('leave');
     else if (k === 'ok') { if (h.length) launch(S.sel); else addAppsRoute(); }
@@ -1679,8 +1703,18 @@
     if (!k || ev.metaKey || ev.ctrlKey || ev.altKey) return;
     ev.preventDefault();
     if (k === 'ok' || k === 'back') { if (ev.repeat || heldKeys[code]) return; heldKeys[code] = true; }
+    else rapidMove();
     press(k);
   });
+  /* Held or fast arrow presses skip the focus spring so the pill keeps up, then
+     the spring returns once movement pauses. Class only: no layout or re-render. */
+  var lastMoveAt = 0, rapidTimer = null;
+  function rapidMove() {
+    var now = Date.now(), root = document.documentElement;
+    if (now - lastMoveAt < 240) root.className = root.className.indexOf('is-rapid') < 0 ? (root.className + ' is-rapid').replace(/^ /, '') : root.className;
+    lastMoveAt = now; clearTimeout(rapidTimer);
+    rapidTimer = setTimeout(function () { root.className = root.className.replace(/ ?is-rapid/, ''); }, 260);
+  }
   document.addEventListener('keyup', function (ev) { delete heldKeys[ev.keyCode]; });
   window.addEventListener('blur', function () { heldKeys = {}; });
   window.addEventListener('focus', function () { FrameDevice.cancelSource(); release(); refreshInputsOnReturn(); focusStage(); after(); updateClock(); refreshArt(); });
