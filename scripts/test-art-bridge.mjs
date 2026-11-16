@@ -2,8 +2,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createRequire } from 'node:module';
-import { mkdtempSync, readFileSync, writeFileSync, readdirSync, rmSync, chmodSync, realpathSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdtempSync, readFileSync, writeFileSync, readdirSync, rmSync, chmodSync, realpathSync, statSync, lstatSync, symlinkSync, existsSync } from 'node:fs';
+import { tmpdir, networkInterfaces } from 'node:os';
+import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import http from 'node:http';
 import net from 'node:net';
@@ -219,4 +220,228 @@ test('TV interface mode refuses other LAN clients and nonlocal bindings', () => 
   assert.equal(shard.localClient('192.168.50.10', '192.168.50.11'), false);
   assert.equal(shard.localClient('192.168.50.10', '127.0.0.1'), false);
   for (const address of ['0.0.0.0', 'example.com', '198.51.100.123', '::']) assert.throws(() => shard.listenAddress({ address }), /Invalid bridge address/);
+});
+
+/* ---------- Lights, doorbell PiP and MQTT lifecycle ---------- */
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const sha256 = b => createHash('sha256').update(b).digest('hex');
+const STREAM = 'http://192.168.1.2:1984/api/stream.mjpeg?src=doorbell&x=1';
+const PIP = { 'cleanframe-pip.dll': Buffer.from('fake dll'), 'cleanframe-pip.runtimeconfig.json': Buffer.from('{"runtimeOptions":{}}'), 'res/frame.png': Buffer.from('frame'), 'res/mask.png': Buffer.from('mask') };
+function withPip(dir) { writeFileSync(join(dir, 'pip.b64.json'), JSON.stringify(Object.fromEntries(Object.entries(PIP).map(([k, v]) => [k, v.toString('base64')])))); }
+const ok = { stdout: '', stderr: '', exit_code: 0, timed_out: false };
+// A bridge with a free port, a private temp dir and the given ctx overrides; always stopped and removed.
+async function withBridge(options, run) {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'cleanframe-art-'))), port = await freePort(), calls = [];
+  const { config = {}, pip = true, execute = async () => ok, start = true, ...ctx } = options;
+  if (pip) withPip(dir);
+  const bridge = shard({ dir, config: { get: () => ({ port, ...config }) }, execute: async (cmd, timeout) => { calls.push(cmd); return execute(cmd, timeout); }, vetroMqttPath: join(dir, 'vetro-mqtt.json'), ...ctx });
+  try { if (start) await bridge.start(); await run({ bridge, port, dir, calls }); }
+  finally { await bridge.stop(); rmSync(dir, { recursive: true, force: true }); }
+}
+async function server(handler) { const s = http.createServer(handler); await new Promise(r => s.listen(0, '127.0.0.1', r)); return s; }
+const closeServer = s => new Promise(r => { s.closeAllConnections?.(); s.close(() => r()); });
+
+test('/lights fires the fixed Vetro rule: 204, 429 when pressed again, 502 on failure or timeout', async () => {
+  let mode = 'ok', seen = [];
+  const upstream = await server((req, res) => {
+    let body = ''; req.on('data', c => { body += c; }); req.on('end', () => {
+      seen.push({ method: req.method, url: req.url, body });
+      if (mode === 'ok') { res.writeHead(200); res.end('{}'); } else if (mode === 'fail') { res.writeHead(500); res.end(); }
+    });
+  });
+  try {
+    await withBridge({ vetroPort: upstream.address().port, lightsTimeoutMs: 200 }, async ({ port }) => {
+      assert.equal((await get(port, '/lights', 'null', 'POST')).status, 204);
+      assert.deepEqual(seen, [{ method: 'POST', url: '/remap/run', body: '{"type":"http","value":"cleanframe-lights"}' }]);
+      assert.equal((await get(port, '/lights', 'null', 'POST')).status, 429);
+      assert.equal(seen.length, 1);
+      await sleep(1510); mode = 'fail';
+      assert.equal((await get(port, '/lights', 'null', 'POST')).status, 502);
+      await sleep(1510); mode = 'hang';
+      const t = Date.now(); assert.equal((await get(port, '/lights', 'null', 'POST')).status, 502); assert.ok(Date.now() - t < 1500);
+    });
+    // Nothing listening upstream.
+    await withBridge({ vetroPort: await freePort() }, async ({ port }) => { assert.equal((await get(port, '/lights', 'null', 'POST')).status, 502); });
+  } finally { await closeServer(upstream); }
+});
+
+test('/lights refuses a client other than the bound TV address', async (t) => {
+  const lan = Object.values(networkInterfaces()).flat().find(i => i && i.family === 'IPv4' && !i.internal);
+  if (!lan) { t.skip('no LAN IPv4 address'); return; }
+  let hits = 0; const upstream = await server((req, res) => { hits++; res.writeHead(200); res.end(); });
+  try {
+    await withBridge({ config: { address: lan.address }, vetroPort: upstream.address().port }, async ({ port }) => {
+      const status = await new Promise((resolve, reject) => {
+        const r = http.request({ host: lan.address, port, path: '/lights', method: 'POST', localAddress: '127.0.0.1', agent: false, headers: { Origin: 'null' } }, res => { res.resume(); resolve(res.statusCode); });
+        r.on('error', reject); r.end();
+      });
+      assert.equal(status, 403); assert.equal(hits, 0);
+    });
+  } finally { await closeServer(upstream); }
+});
+
+test('unpackPip writes private files, records their hashes and refuses a symlinked pip/', async () => {
+  await withBridge({}, async ({ bridge, dir }) => {
+    const out = join(dir, 'pip');
+    assert.equal(bridge._test.pipDir(), out);
+    assert.equal(statSync(out).mode & 0o777, 0o700); assert.equal(statSync(join(out, 'res')).mode & 0o777, 0o700);
+    for (const [name, data] of Object.entries(PIP)) { assert.deepEqual(readFileSync(join(out, name)), data); assert.equal(lstatSync(join(out, name)).mode & 0o777, 0o600); }
+    assert.deepEqual(bridge._test.pipHashes(), Object.fromEntries(Object.entries(PIP).map(([k, v]) => [k, sha256(v)])));
+    // An old world-readable install, and a symlink planted for a file, are both replaced.
+    chmodSync(join(out, 'res/frame.png'), 0o644); rmSync(join(out, 'res/mask.png')); symlinkSync('/etc/hosts', join(out, 'res/mask.png'));
+    assert.equal(bridge._test.unpackPip(), true);
+    assert.equal(lstatSync(join(out, 'res/frame.png')).mode & 0o777, 0o600);
+    assert.ok(lstatSync(join(out, 'res/mask.png')).isFile()); assert.deepEqual(readFileSync(join(out, 'res/mask.png')), PIP['res/mask.png']);
+  });
+  const elsewhere = realpathSync(mkdtempSync(join(tmpdir(), 'cleanframe-elsewhere-')));
+  try {
+    await withBridge({ start: false, config: { pip: { stream: STREAM } } }, async ({ bridge, dir, calls }) => {
+      symlinkSync(elsewhere, join(dir, 'pip'));
+      await bridge.start();
+      assert.equal(bridge.status().doorbell.error, 'PiP unpack failed'); assert.equal(bridge._test.pipHashes(), null);
+      assert.deepEqual(readdirSync(elsewhere), []);
+      assert.equal(bridge._test.ring(), null); assert.equal(calls.length, 0);
+    });
+  } finally { rmSync(elsewhere, { recursive: true, force: true }); }
+});
+
+test('stream URLs need exactly four octets on a private network', async () => {
+  const cases = { 'http://10.1.2:80/a': false, 'http://10.1.2.3.4:80/a': false, 'http://192.168.1:80/a': false, 'http://192.168.1.2.3:80/a': false, 'http://172.16.1:80/a': false,
+    'http://10.1.2.3:80/a': true, 'http://192.168.1.2:1984/api/stream.mjpeg?src=x': true, 'http://172.31.0.1:80/a': true, 'http://172.32.0.1:80/a': false, 'http://8.8.8.8:80/a': false };
+  for (const [stream, configured] of Object.entries(cases)) {
+    const bridge = shard({ dir: tmpdir(), config: { get: () => ({ pip: { stream } }) }, execute: () => { throw Error('Unexpected execute'); } });
+    assert.equal(bridge.status().doorbell.configured, configured, stream);
+  }
+  const cs = readFileSync(new URL('../native/doorbell-pip/Program.cs', import.meta.url), 'utf8');
+  const pattern = new RegExp(/Regex\.IsMatch\(_url, @"([^"]+)"\)/.exec(cs)[1]);
+  for (const [stream, configured] of Object.entries(cases)) assert.equal(pattern.test(stream), configured, 'Program.cs ' + stream);
+});
+
+// Runs ring()'s root command in a real sh with stub systemctl/systemd-run, so the verification itself is exercised.
+function shellExecute(tools) {
+  const bin = realpathSync(mkdtempSync(join(tmpdir(), 'cleanframe-bin-'))), log = join(bin, 'started');
+  for (const name of ['systemctl', 'systemd-run']) { writeFileSync(join(bin, name), '#!/bin/sh\necho "' + name + ' $*" >> ' + JSON.stringify(log) + '\n', { mode: 0o755 }); }
+  for (const name of tools) { const found = spawnSync('sh', ['-c', 'command -v ' + name]).stdout.toString().trim(); if (found) symlinkSync(found, join(bin, name)); }
+  return { bin, log, started: () => { try { return readFileSync(log, 'utf8').split('\n').filter(l => l.startsWith('systemd-run')); } catch { return []; } },
+    execute: async cmd => { const r = spawnSync('/bin/sh', ['-c', cmd], { env: { PATH: bin } }); return { stdout: r.stdout.toString(), stderr: '', exit_code: r.status, timed_out: false }; } };
+}
+
+test('ring verifies the unpacked hashes as root, quotes the stream URL and reports failure', async () => {
+  for (const hasher of ['sha256sum', 'openssl']) {
+    const sh = shellExecute(['rm', 'cut', hasher]);
+    try {
+      await withBridge({ config: { pip: { stream: STREAM, seconds: 12 } }, execute: sh.execute }, async ({ bridge, dir, calls }) => {
+        const out = join(dir, 'pip');
+        assert.equal(await bridge._test.ring(), true, hasher);
+        const cmd = calls[0];
+        for (const [name, data] of Object.entries(PIP)) assert.ok(cmd.includes(`test "$(cfsum '${join(out, name)}')" = ${sha256(data)}`), name);
+        assert.ok(cmd.indexOf('cfsum \'') < cmd.indexOf('systemd-run'));
+        assert.ok(cmd.includes(" --url '" + STREAM + "' --seconds 12 "));
+        assert.ok(!cmd.includes('echo ok'));
+        assert.equal(sh.started().length, 1); assert.ok(sh.started()[0].includes('--unit=cleanframe-pip'));
+        assert.equal(bridge.status().doorbell.error, null);
+        // A changed dll after unpack: nothing starts and the error is reported.
+        writeFileSync(join(out, 'cleanframe-pip.dll'), 'tampered');
+        await sleep(3010);
+        assert.equal(await bridge._test.ring(), false);
+        assert.equal(sh.started().length, 1); assert.equal(bridge.status().doorbell.error, 'PiP start failed');
+      });
+    } finally { rmSync(sh.bin, { recursive: true, force: true }); }
+  }
+  // Neither hashing tool: fail closed.
+  const sh = shellExecute(['rm', 'cut']);
+  try {
+    await withBridge({ config: { pip: { stream: STREAM } }, execute: sh.execute }, async ({ bridge }) => {
+      assert.equal(await bridge._test.ring(), false); assert.equal(sh.started().length, 0);
+    });
+  } finally { rmSync(sh.bin, { recursive: true, force: true }); }
+});
+
+test('ring does nothing without a dll or a configured stream', async () => {
+  await withBridge({ config: { pip: { stream: STREAM } } }, async ({ bridge, dir, calls }) => {
+    rmSync(join(dir, 'pip', 'cleanframe-pip.dll'));
+    assert.equal(bridge._test.ring(), null); assert.equal(calls.length, 0); assert.equal(bridge.status().doorbell.error, 'PiP not installed');
+  });
+  await withBridge({ pip: false, config: { pip: { stream: STREAM } } }, async ({ bridge, calls }) => { assert.equal(bridge._test.ring(), null); assert.equal(calls.length, 0); });
+  await withBridge({ config: { pip: { stream: 'http://10.1.2:80/a' } } }, async ({ bridge, calls }) => { assert.equal(bridge._test.ring(), null); assert.equal(calls.length, 0); });
+});
+
+// A tiny MQTT broker: CONNACK, SUBACK, then whatever each session's script sends.
+async function broker(sessions) {
+  const state = { connections: 0, closed: 0, subscribed: [], sockets: [] };
+  const s = net.createServer(socket => {
+    const session = sessions[state.connections++] || (() => {});
+    state.sockets.push(socket); socket.on('close', () => { state.closed++; }); socket.on('error', () => {});
+    let buf = Buffer.alloc(0);
+    socket.on('data', chunk => {
+      buf = Buffer.concat([buf, chunk]); const parsed = shard.mqttPackets(buf); buf = parsed.rest;
+      for (const p of parsed.packets) {
+        if (p.type === 1) socket.write(Buffer.from([0x20, 2, 0, 0]));
+        else if (p.type === 8) { state.subscribed.push(p.body.subarray(4, 4 + p.body.readUInt16BE(2)).toString()); socket.write(Buffer.from([0x90, 3, 0, 1, 0])); session(socket); }
+      }
+    });
+  });
+  await new Promise(r => s.listen(0, '127.0.0.1', r));
+  state.port = s.address().port; state.close = () => { state.sockets.forEach(x => x.destroy()); return new Promise(r => s.close(() => r())); };
+  return state;
+}
+const publish = (payload, retain = false) => { const topic = Buffer.from('vetro/cleanframe/doorbell'); return shard.mqttPacket(retain ? 0x31 : 0x30, Buffer.concat([Buffer.from([0, topic.length]), topic, Buffer.from(payload)])); };
+async function until(fn, ms = 2000) { const end = Date.now() + ms; while (!fn()) { if (Date.now() > end) throw Error('timed out waiting'); await sleep(10); } }
+function mqttFile(dir, port) { const file = join(dir, 'vetro-mqtt.json'); writeFileSync(file, JSON.stringify({ enabled: true, host: '127.0.0.1', port })); return file; }
+
+test('MQTT doorbell: one start per ring, retained and malformed messages ignored, clear stops, stop() tears down', async () => {
+  let secondSession;
+  const gate = new Promise(r => { secondSession = r; });
+  const b = await broker([
+    socket => { socket.write(Buffer.concat([publish('ring'), publish('clear', true), Buffer.from([0x30, 1, 0]), Buffer.from([0x30, 3, 0, 9, 65])])); },
+    socket => { gate.then(() => socket.write(publish('clear'))); }
+  ]);
+  const errors = []; const onError = e => errors.push(e); process.on('uncaughtException', onError);
+  const timersBefore = process.getActiveResourcesInfo().filter(r => r === 'Timeout').length;
+  try {
+    await withBridge({ start: false, config: { pip: { stream: STREAM } }, mqttRetryMs: 50 }, async ({ bridge, dir, calls }) => {
+      const stopFile = join(dir, 'pip', 'stop');
+      mqttFile(dir, b.port);
+      await bridge.start();
+      await until(() => b.connections === 2);
+      assert.deepEqual(b.subscribed.slice(0, 1), ['vetro/cleanframe/doorbell']);
+      assert.equal(calls.filter(c => c.includes('systemd-run')).length, 1);
+      assert.ok(calls[0].includes(" --url '" + STREAM + "' "));
+      assert.equal(existsSync(stopFile), false);           // The retained 'clear' was ignored.
+      assert.equal(b.closed, 1);                           // The malformed packet dropped the first session only.
+      secondSession();
+      await until(() => existsSync(stopFile));
+      await until(() => bridge.status().doorbell.listening);
+      await bridge.stop();
+      await until(() => b.closed === 2);
+      assert.equal(bridge.status().doorbell.listening, false);
+      await sleep(150); assert.equal(b.connections, 2);   // No reconnect after stop.
+    });
+    assert.equal(process.getActiveResourcesInfo().filter(r => r === 'Timeout').length, timersBefore);
+    assert.deepEqual(errors, []);
+  } finally { process.off('uncaughtException', onError); await b.close(); }
+});
+
+test('missing MQTT settings retry while running; a failed listen never leaves MQTT running', async () => {
+  const b = await broker([]);
+  try {
+    const dir0 = realpathSync(mkdtempSync(join(tmpdir(), 'cleanframe-mqtt-'))), file = join(dir0, 'vetro-mqtt.json');
+    await withBridge({ config: { pip: { stream: STREAM } }, vetroMqttPath: file, mqttConfigRetryMs: 50 }, async ({ bridge }) => {
+      assert.equal(bridge.status().doorbell.error, 'No Vetro MQTT settings');
+      writeFileSync(file, JSON.stringify({ enabled: false, host: '127.0.0.1', port: b.port }));
+      await until(() => bridge.status().doorbell.error === 'Vetro MQTT is off');
+      mqttFile(dir0, b.port);
+      await until(() => b.connections === 1 && bridge.status().doorbell.listening);
+    });
+    await until(() => b.closed === 1);
+    // The port is taken: start rejects and neither connects nor schedules MQTT.
+    const blocker = net.createServer(); await new Promise(r => blocker.listen(0, '127.0.0.1', r));
+    try {
+      const dir = realpathSync(mkdtempSync(join(tmpdir(), 'cleanframe-art-')));
+      const bridge = shard({ dir, vetroMqttPath: mqttFile(dir0, b.port), mqttConfigRetryMs: 20, mqttRetryMs: 20, config: { get: () => ({ port: blocker.address().port, pip: { stream: STREAM } }) }, execute: async () => ok });
+      await assert.rejects(bridge.start(), /Bridge listen failed/);
+      await sleep(100); assert.equal(b.connections, 1); assert.equal(bridge.status().running, false);
+      await bridge.stop(); rmSync(dir, { recursive: true, force: true });
+    } finally { await new Promise(r => blocker.close(r)); rmSync(dir0, { recursive: true, force: true }); }
+  } finally { await b.close(); }
 });
