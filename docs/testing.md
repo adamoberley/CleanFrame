@@ -10,9 +10,9 @@ npx playwright install chromium
 npm run check:browser
 ```
 
-`check` runs ES5 runtime lint, validates package identity/version and bundled resources, then tests the production device adapter with a synthetic API/clock. `check:device` is the synthetic adapter test included in this command, despite its name. Neither command contacts a TV. `check:browser` uses a fresh Playwright Chromium profile and its own loopback preview. It checks List and Dock navigation, single focus, Home controls, grouped Settings, explicit OK application, applied checkmarks, pending-load cancellation, retries, persistence, Art Mode cache recovery, new defaults and Live TV, Inter loading and fallback, 720p scaling, migrations, the Home editor and honest browser-only launch errors. Reports and screenshots are in ignored `.local/qa/`. A failed assertion exits with a nonzero status.
+`check` runs ES5 runtime lint, validates package identity/version and bundled resources, then tests the production device adapter with a synthetic API/clock. `check:device` is the synthetic adapter test included in this command, despite its name. Neither command contacts a TV. `check:browser` uses a fresh Playwright Chromium profile and its own loopback preview. It checks List and Dock navigation, single focus, Home controls, grouped Settings, explicit OK application, applied checkmarks, pending-load cancellation, retries, persistence, Art Mode cache recovery, new defaults and Live TV, Inputs on Home, the 24-app Home cap, the system font with no font requests, 720p scaling, migrations, the Home editor and honest browser-only launch errors. Reports and screenshots are in ignored `.local/qa/`. A failed assertion exits with a nonzero status.
 
-Run `npm run check:public` for the bounded source/history checks and `npm run export:public` for the unsigned public widget. (`CLEANFRAME_PUBLIC_FONTS=1` is no longer needed; Inter is the only font.) The GitHub Actions workflow uses this public path. Browser/package checks do not clear third-party asset rights or validate TV behaviour.
+Run `npm run check:public` for the bounded source/history checks and `npm run export:public` for the unsigned public widget. The GitHub Actions workflow uses this public path. Browser/package checks do not clear third-party asset rights or validate TV behaviour.
 
 `check:tools` uses synthetic credentials and a fake SDK in isolated temporary folders. It checks local configuration, identity overlays, owner-only password files, both signing modes, failed-build handling, private-file rejection, public signature metadata and real Git index/history blobs. It contacts no TV and reads no real signing credentials. Temporary fixtures are retained for inspection instead of permanently deleted.
 
@@ -27,7 +27,7 @@ PLAYWRIGHT_BROWSERS_PATH="$PWD/.local/playwright" npx playwright install chromiu
 PLAYWRIGHT_BROWSERS_PATH="$PWD/.local/playwright" npm run check:browser
 ```
 
-For manual review, use `npm run dev` and open `/home/`. Use the arrow keys, Enter and Escape. Check the changed flow in List and Dock, with Glass and Text focus. Check a single app and all nine apps when changing app layout. In Settings, browse without applying, apply with OK, return with both Back routes, and cancel a pending resource load. Check editor placement/undo, Art Mode refresh cancellation and restored focus on return when those flows change. Browser preferences are separate from TV preferences.
+For manual review, use `npm run dev` and open `/home/`. Use the arrow keys, Enter and Escape. Check the changed flow in List and Dock, with Glass and Text focus. Check a single app, the scroll point (seven in List, five in Dock) and a long Home list when changing app layout. In Settings, browse without applying, apply with OK, return with both Back routes, and cancel a pending resource load. Check editor placement/undo, Art Mode refresh cancellation and restored focus on return when those flows change. Browser preferences are separate from TV preferences.
 
 `npm run check:performance` runs the existing 4× CPU-throttled Chromium regression screen. Compare navigation work, frame stalls, retained DOM/heap and live-filter checks before and after rendering changes. This is not a physical-TV benchmark.
 
@@ -41,7 +41,7 @@ Run these only under a task that includes TV testing. Announce any installation 
 
 1. Move in both directions through each layout and Settings; check focus, response and readable labels from the sofa.
 2. Launch Netflix/YouTube, press Home to return, and check the selected app. Treat streaming apps' own Back handling separately.
-3. Check Art Mode, Other apps, TV settings and Settings → Samsung → Samsung Home; verify the actual visible destinations.
+3. Check All apps, an HDMI entry, Settings → Samsung Home and Back → Samsung Home; verify the actual visible destinations. When configured, check Lights, the Cameras grid and full screen.
 4. Check saved appearance and app order after relaunch. Verify the last-good Art photo appears offline, visible Home refreshes it, and Settings/hidden states preserve the committed appearance. Check Live TV reaches antenna/cable channels and ESPN opens the installed app.
 5. Test normal power-on after a streaming app and the usual Art Mode routine only when that work is included. Preserve the native Home recovery baseline and restore it before any uninstall/identity change.
 

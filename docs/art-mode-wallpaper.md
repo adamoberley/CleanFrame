@@ -29,7 +29,7 @@ Values in between are interpolated linearly. The bridge reads Art Mode's `bright
 | 5 | ×1 | ×1 | 0.86 | 0 | ×1 / ×1 / ×1 |
 | 10 | ×1 | ×1.55 | 0.78 | −0.064 | ×0.95 / ×1 / ×1 |
 
-Dimming scales the multiply tint instead of CSS `brightness`. Darkening before the gamma curve took proportionally more blue out of dark values and turned shadows olive. Brightening above 5 raises the image's own brightness, because a multiply tint cannot lighten. Art Mode's automatic ambient dimming has no readable value, so in a dark room Art Mode can look slightly darker than CleanFrame. The bridge never changes display settings. Sheets (Settings, Apps, the Samsung Home message and other full-screen views) sit on a frosted copy of the Art photo with the same look and a darker multiply veil. The frost is made once per photo by drawing it down to 160×90 on a canvas and letting the browser upscale it smoothly; nothing reads pixels and nothing runs on navigation. If the draw fails, sheets keep the plain matte. There is no runtime blur, canvas pixel analysis or network activity on arrow-key navigation.
+Dimming scales the multiply tint instead of CSS `brightness`. Darkening before the gamma curve took proportionally more blue out of dark values and turned shadows olive. Brightening above 5 raises the image's own brightness, because a multiply tint cannot lighten. Art Mode's automatic ambient dimming has no readable value, so in a dark room Art Mode can look slightly darker than CleanFrame. The bridge never changes display settings. Sheets (Settings, Apps, the Samsung Home message and other full-screen views) sit on a frosted copy of the Art photo with the same look and a darker multiply veil. The frost is made once per photo: a 480×270 canvas copy with a one-time canvas `blur` filter (a halve-then-double ladder where canvas filters are missing). It is stored in `cleanframe.art.frost.v1` and reused on later launches while the photo revision is unchanged, and the same draw saves a small unblurred preview (`cleanframe.art.preview.v1`) that is shown at launch before the full image decodes. The dock mat uses the same frost. Nothing reads pixels and nothing runs on navigation. If the draw fails, sheets keep the plain matte. There is no blur during navigation, canvas pixel analysis or network activity on arrow-key navigation.
 
 ## Build and host contract
 
@@ -39,13 +39,13 @@ npm run check:art
 npm run pack:art
 ```
 
-`dist/cleanframe-art.vplugin` is ignored output. The packer is deterministic and includes only the checked-in `index.js` and manifest, never configuration, a cache or artwork. Its text JSON is:
+`dist/cleanframe-art.vplugin` is ignored output. The packer is deterministic and includes only the checked-in `index.js` and manifest, plus the doorbell picture-in-picture build as `pip.b64.json` when `npm run build:pip` has produced one ([`native/doorbell-pip`](../native/doorbell-pip/README.md)); never configuration, a cache or artwork. Its text JSON is:
 
 ```json
-{"format":"vetro-plugin","version":1,"manifest":{"id":"cleanframe-art","name":"CleanFrame Art bridge","version":"1.0.0","apiVersion":1,"permissions":["exec"],"entry":"index.js"},"files":{"index.js":"<source text>"}}
+{"format":"vetro-plugin","version":1,"manifest":{"id":"cleanframe-art","name":"CleanFrame Art bridge","version":"1.3.1","apiVersion":1,"permissions":["exec"],"entry":"index.js"},"files":{"index.js":"<source text>"}}
 ```
 
-`manifest.json` is not a `files` entry. The packer enforces the 20-file / 512 KiB envelope; this shard uses one file. The ES5 module uses Node 4.4 core APIs and exports `module.exports(ctx)` returning `{start, stop, status, route}`. It requires this Vetro API version 1 contract:
+`manifest.json` is not a `files` entry. The packer enforces the 20-file / 512 KiB envelope; this shard uses one file, or two with the doorbell picture-in-picture build. The ES5 module uses Node 4.4 core APIs and exports `module.exports(ctx)` returning `{start, stop, status, route}`. It requires this Vetro API version 1 contract:
 
 - `ctx.dir`: an existing directory writable as the process UID; the shard canonicalises it and creates a private `art-cache/` child.
 - `ctx.execute(command, timeoutMs)`: root execution, returning a Promise for `{stdout, stderr, exit_code, timed_out}`. The host must enforce the timeout and its 1 MiB output limit. The shard requests 4 seconds per command and rejects excessive output/errors without exposing diagnostics.

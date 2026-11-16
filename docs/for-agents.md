@@ -8,7 +8,7 @@ Choose the scope before starting: a browser contribution, an independently signe
 
 Use the browser-only prompt in the README. Read `AGENTS.md`, then the development and interaction docs. `npm run check` and `check:device` are offline source/synthetic-adapter checks. Run the browser preview so the result is reproducible on a clean clone. Finish with source validation, relevant browser checks, a screenshot for visual changes and a clear statement of what needs physical TV observation.
 
-This personal fork uses List and Dock, the Art Mode photo as its only background, Inter as its only font and separate appearance settings. `app/main.js` handles interaction; `app/device.js` owns device calls. The existing storage migration keeps older installations usable.
+This personal fork uses List and Dock, the Art Mode photo as its only background (with the calibrated Art look in `app/art-mode.js`), the TV's system font (One UI Sans, no font files) and separate appearance settings. `app/main.js` handles interaction, the optional Lights and Cameras controls and weather; `app/device.js` owns device calls. Owner settings (bridge address, weather location, cameras) live in TV localStorage and the owner's ignored build, never in source. The existing storage migration keeps older installations usable.
 
 ## Install your own copy
 
@@ -43,4 +43,4 @@ A separate [experimental 2020 LS03T profile](../scripts/native-home/frame-2020/R
 
 ## Public distribution
 
-Run `npm run check:public` and `npm run export:public`. The latter is an offline unsigned export that contains only the bundled Inter font. Do not upload a personal signed widget as the public release. Read the third-party notices and publication checklist. Repo visibility, release uploads and history changes need their own explicit instruction.
+Run `npm run check:public` and `npm run export:public`. The latter is an offline unsigned export with no font files. Do not upload a personal signed widget as the public release. Read the third-party notices and publication checklist. Repo visibility, release uploads and history changes need their own explicit instruction.
