@@ -348,7 +348,7 @@
   }
   function setSel(id) { S.sel = id; S.selIdx = visibleHome().indexOf(id); }
 
-  /* Membership and order operations shared by B and C. A works on slots (below). */
+  /* Home membership and order operations used by the editor. */
   function homeRemove(id) {
     var a = app(id), i = S.c.home.indexOf(id), before = snap(), h;
     if (i < 0) return false;
@@ -475,7 +475,7 @@
     } catch (e) { finish(false); }
   }
   function openCameras() { push({ id: 'cameras', f: { i: 0 }, full: false, ratios: {} }); }
-  function addAppsRoute() { openEditor('home'); }
+  function addAppsRoute() { openEditor(); }
   function openSettings() { push({ id: 'settings', f: { id: S.settingsFocus } }); }
   function openAppearance(group) {
     var axis = { layout: 'layout' }[group];
@@ -487,11 +487,11 @@
     var e = { id: 'apps', mode: 'browse', top: 0, f: { zone: 'grid', i: Math.max(0, ALPHA.indexOf(S.appsFocus)), h: 0 } };
     push(e); refreshCatalog(); return e;
   }
-  function openEditor(origin) {
+  function openEditor() {
     ensureSel(); var i = S.c.home.indexOf(S.sel);
     clearSession();
     refreshCatalog();
-    push({ id: 'editor', origin: origin, lifted: null, top: 0, otherReturn: { id: otherList()[0] || null, index: 0, top: 0 }, f: { zone: S.c.home.length ? 'home' : 'other', i: Math.max(0, i), part: 'name', h: 1, j: 0 } });
+    push({ id: 'editor', lifted: null, top: 0, otherReturn: { id: otherList()[0] || null, index: 0, top: 0 }, f: { zone: S.c.home.length ? 'home' : 'other', i: Math.max(0, i), part: 'name', h: 1, j: 0 } });
   }
   function isSettingsDetail(t) { return t.id === 'appearance'; }
 
@@ -587,7 +587,7 @@
     point: function (t, z, i) { if (z === 'grid') { t.f.zone = 'grid'; t.f.i = i; } else if (z === 'head') t.f.zone = 'head'; else return; this.key(t, 'ok'); }
   };
 
-  /* ---------- B: two-zone Home editor ---------- */
+  /* ---------- Two-zone Home editor ---------- */
   function otherGroups() {
     var rec = S.c.recent.filter(function (id) { return !onHome(id) && app(id); });
     return { recent: rec, rest: ALPHA.filter(function (id) { return !onHome(id) && rec.indexOf(id) < 0; }) };
@@ -714,7 +714,7 @@
     point: function (t, z, i, id) { if (z === 'row' && id) { t.f.id = id; this.key(t, 'ok'); } }
   };
   function settingsOk(id) {
-    if (id === 'editor') openEditor('settings');
+    if (id === 'editor') openEditor();
     else if (id === 'samsung') perform('Samsung Home', FrameDevice.home);
     else openAppearance(id);
   }
@@ -1673,7 +1673,7 @@
     if (name === 'apps') openApps();
     else if (name === 'settings') openSettings();
     else if (name === 'appearance') { openSettings(); top().f.id = 'layout'; S.settingsFocus = 'layout'; openAppearance('layout'); }
-    else if (name === 'editor') { openSettings(); openEditor('settings'); }
+    else if (name === 'editor') { openSettings(); openEditor(); }
     after();
   }
   function fit() {

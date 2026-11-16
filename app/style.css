@@ -128,7 +128,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000}
 .bg-photo.f-type .ph-row.is-sel .ph-group{opacity:.92}
 .bg-photo.f-type .ph-row.is-focus .ph-group{opacity:1}
 .ph-plate{position:absolute;z-index:1;left:80px;top:0;width:360px;height:106px;border-radius:53px;overflow:hidden;opacity:0;transform:translateZ(0) scale(.94);transform-origin:0 50%;transition:opacity 160ms linear,transform var(--spring-t) var(--spring)}
-.ph-plate.on-focus,.ph-plate.on-lift{opacity:1;transform:translateZ(0) scale(1)}
+.ph-plate.on-focus{opacity:1;transform:translateZ(0) scale(1)}
 .ph-plate.on-sel{opacity:.5}
 .ph-plate.is-outgoing{opacity:0}
 .ph-plate.is-preparing{opacity:0!important;transition:none!important}
@@ -139,7 +139,6 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000}
 /* ---------- Sheets: one matte layer. Home is hidden behind it: no glass on glass. ---------- */
 .sheet{position:absolute;left:0;top:0;width:1920px;height:1080px;background:#0f1416}
 .at-appearance .sheet{z-index:1}
-.bg-photo.m-tint .sheet{--plate:rgba(14,12,10,.42);--lift:rgba(14,12,10,.62);--plate-edge:none}
 .sheet-bg{position:absolute;left:0;top:0;width:1920px;height:1080px;max-width:none;object-fit:cover}
 .sheet-veil{position:absolute;left:0;top:0;width:1920px;height:1080px;background:rgba(8,12,14,.42)}
 .view{position:absolute;left:0;top:0;width:1920px;height:1080px}
@@ -280,7 +279,6 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000}
 .quiet-utils.is-both .u[data-action="util.settings"]{padding-right:15px}
 .l-list .quiet-utils.is-both .u{font-size:28px}
 .l-list .util-focus-label{text-align:right}
-.bg-photo.l-list.m-frost .ph-veil{background:rgba(12,10,8,.06)}
 .tile-content{position:absolute;top:0;right:0;bottom:0;left:0;border-radius:inherit;transform-origin:50% 50%;transition:opacity 160ms linear,transform var(--t) var(--ease)}
 .f-type .plate{opacity:0}
 .f-type .tile-content{opacity:.62}
@@ -294,7 +292,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000}
 /* Region classes are an offline classification, never runtime pixel sampling. */
 .bg-photo{--tr-rest:.66;--br-rest:.66;--tr-peer:.46;--br-peer:.46}
 .bg-photo.l-list .caption{color:var(--tr-ink)}
-.bg-photo.l-list .caption .clock,.bg-photo.l-list .caption .cap-title,.bg-photo.l-list .caption .cap-line{color:var(--tr-ink);text-shadow:var(--tr-shadow)}
+.bg-photo.l-list .caption .clock,.bg-photo.l-list .caption .cap-line{color:var(--tr-ink);text-shadow:var(--tr-shadow)}
 .quiet-utils{--u-ink:var(--tr-ink);--u-rest:var(--tr-rest);--u-peer:var(--tr-peer);--u-under:var(--tr-under);--u-shadow:var(--tr-shadow)}
 .l-list .quiet-utils{--u-ink:var(--br-ink);--u-rest:var(--br-rest);--u-peer:var(--br-peer);--u-under:var(--br-under);--u-shadow:var(--br-shadow)}
 .quiet-utils .u{color:var(--u-ink);opacity:var(--u-rest);text-shadow:var(--u-shadow)}
@@ -316,7 +314,6 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000}
 .setting-name{display:block;white-space:nowrap}
 .setting-tick{display:flex;align-items:center;justify-content:center;flex:none;width:30px;height:32px;margin-left:0}
 .setting-tick .ico{width:30px;height:30px;stroke-width:2.2}
-.setting-forward{width:28px;height:28px;margin-left:auto;flex:none}
 .is-horizontal .setting-options{flex-direction:row}
 .is-horizontal .setting-choice{flex:1;min-width:0;min-height:92px;padding:12px 20px;font-size:36px}
 .is-horizontal .setting-tick{width:26px;margin-left:0}
@@ -352,13 +349,11 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000}
 .stage.is-reflow *{transition:none!important;animation:none!important}
 .dock .tile,.dock .plate{width:var(--tile-w);height:var(--tile-h)}
 .dock .track{height:var(--dock-h)}
-.dock .nudge{top:var(--nudge-top)}
 .a-text .tile .label{left:12px;right:12px;top:28px;font-size:40px;line-height:48px;font-weight:600}
 .a-text .label-ink{display:inline-block;max-width:100%;overflow:hidden;text-overflow:ellipsis;vertical-align:top}
 .a-icons .tile .mark{left:20px;top:28px}
-.a-text .ph-name,.a-text .ph-list.is-compact .ph-name{left:28px}
+.a-text .ph-name{left:28px}
 .a-icons .ph-group .mark{top:20px}
-.a-icons .ph-list.is-compact .ph-group .mark{top:12px}
 .app-focus-name{position:absolute;z-index:3;font-size:40px;line-height:48px;font-weight:500;letter-spacing:-.6px;color:var(--ink);text-shadow:0 1px 2px rgba(14,10,6,.32),0 3px 14px rgba(14,10,6,.24);opacity:0;pointer-events:none;transition:opacity 120ms linear}
 .app-focus-name.is-on{opacity:1}
 .l-dock .app-focus-name{font-size:36px;line-height:44px;text-align:center}
@@ -395,7 +390,6 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000}
 .l-list .quiet-utils .u[data-action="util.settings"] .u-content>*+*{margin-left:0;margin-right:18.9px}
 .setting-options>*+*{margin-top:4px}
 .setting-choice>*+*{margin-left:16px}
-.setting-choice>.setting-forward{margin-left:auto;padding-left:16px;box-sizing:content-box}
 .setting-copy>*+*{margin-top:4px}
 .is-horizontal .setting-options>*+*{margin-top:0;margin-left:12px}
 .is-horizontal .setting-choice>*+*{margin-left:16px}
