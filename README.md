@@ -57,7 +57,7 @@ These are localStorage keys, set on the TV and never committed:
 | --- | --- |
 | `cleanframe.art.host` / `cleanframe.art.port` | Bridge address when loopback is blocked or the port has been changed. The value must be loopback or a private IPv4 address. |
 | `cleanframe.weather.v1` | `{ lat, lon, unit: 'f' \| 'c' }`. This enables Clock › With weather. |
-| `cleanframe.controls.v1` | `{ lights: true, go2rtc: 'http://<private IPv4>:<port>', cameras: [{ name, src, full, ratio }] }`. `src` is the stream for the MJPEG grid, `full` is the optional stream for full screen, `ratio` (for example `"3:4"`) places the tile before any frame arrives, and the grid holds up to six cameras. Learned shapes are kept in `cleanframe.cameras.v1`; each tile shows a quick snapshot before the live stream. |
+| `cleanframe.controls.v1` | `{ lights: true, go2rtc: 'http://<private IPv4>:<port>', cameras: [{ name, src, full, ratio }] }`. `src` is the stream for the MJPEG grid, `full` is the optional stream for full screen, `ratio` (for example `"3:4"`) places the tile before the camera has ever been seen, and the grid holds up to six cameras. Shapes learned from each camera's snapshot are kept in `cleanframe.cameras.v1` and win over `ratio`. Each tile shows a quick snapshot before the live stream, and a dropped stream reconnects every 10 s. |
 | `cleanframe.art.key` | The bridge's per-install key (24–256 printable ASCII characters), sent as `X-CleanFrame-Key`. It must match the bridge config `key`. |
 
 ## Checks

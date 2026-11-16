@@ -7,7 +7,7 @@
   var COOL = { brightness: 0.41, contrast: 0.86, saturate: 0.50, tint: [246, 238, 222], gamma: [1, 1.02, 1.15] };
   var WARM = { brightness: 0.41, contrast: 0.86, saturate: 0.48, tint: [250, 212, 160], gamma: [1, 1.03, 1.19] };
   var look = null;
-  var current = null, loaded = false, readers = [], loading = false, refreshing = false, epoch = 0, requests = [];
+  var current = null, loaded = false, readers = [], loading = false, refreshing = false, epoch = 0, saves = 0, requests = [];
   var copyNo = 0, currentTemp = null;
   var urls = [], retainedURL = null, error = null, fsDir = null, db = null;
   function host() {
@@ -196,7 +196,7 @@
     var ended = false, timer = setTimeout(function () { done(record(m, url)); }, 6000);
     function done(value) { if (ended) return; ended = true; clearTimeout(timer); complete(value); }
     if (fsDir) {
-      var tmp, stream, data = new window.Uint8Array(bytes), i, part, tempName = 'incoming-' + g + '-' + (++copyNo) + '.tmp';
+      var mine = ++saves, tmp, stream, data = new window.Uint8Array(bytes), i, part, tempName = 'incoming-' + g + '-' + (++copyNo) + '.tmp';
       currentTemp = tempName;
       tidy(function () {
         if (ended || g !== epoch) { done(null); return; }
@@ -208,10 +208,10 @@
             stream = s;
             i = 0;
             // Write in 256 KiB steps, yielding between them so Home stays responsive while a new
-            // photo (up to 12 MiB) is saved.
+            // photo (up to 12 MiB) is saved. A save that has started finishes even if the app is
+            // hidden or the caller stops waiting, so the photo is not downloaded again next launch.
             (function step() {
               try {
-                if (ended || g !== epoch) { stream.close(); done(null); return; }
                 part = Array.prototype.slice.call(data.subarray(i, i + 262144)); stream.writeBytes(part); i += 262144;
                 if (i < data.length) { setTimeout(step, 0); return; }
                 stream.close(); stream = null;
@@ -222,7 +222,7 @@
         } catch (e) { done(record(m, url)); }
       });
       function promote() {
-        if (ended || g !== epoch) { done(null); return; }
+        if (mine !== saves) { done(null); return; } // A newer photo's save owns the pointer.
         try {
           localStorage.setItem(META_KEY, JSON.stringify(m));
           tidy(function () {});

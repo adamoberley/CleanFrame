@@ -731,9 +731,11 @@ try {
     const rapid = await current.evaluate(() => document.getElementById('stage').classList.contains('is-rapid'));
     await current.waitForTimeout(450);
     check('Fast presses drop the spring, which returns after a pause', rapid && !(await current.evaluate(() => document.getElementById('stage').classList.contains('is-rapid'))));
+    // Start low enough that a runaway hold would still be moving when checked.
+    for (let i = 0; i < 20; i++) await nav('down');
     await current.keyboard.down('ArrowUp'); await current.waitForTimeout(1500);
     const stalled = await at(), holding = await call('holding'); await current.waitForTimeout(300);
-    check('A hold with no TV repeat events stops after its watchdog', !holding && (await at()) === stalled);
+    check('A hold with no TV repeat events stops after its watchdog', !holding && stalled !== first && (await at()) === stalled, stalled);
     await current.keyboard.up('ArrowUp');
     await group('layout'); await current.waitForTimeout(250);
     check('Settings Focus preview keeps a half plate on the selected app', /on-sel/.test(await plate()), await plate());
@@ -830,11 +832,14 @@ try {
     check('A stream the TV cannot play stays full screen on its MJPEG frame and clears the player', await current.evaluate(() => !document.documentElement.classList.contains('is-avplay') && document.querySelectorAll('.cam .cam-live[src]').length === 1 && !!document.querySelector('.cam.is-focus .cam-live[src]') && window.__avplay.includes('close')));
     await nav('back');
     check('Back stops full-quality playback', await current.evaluate(() => !document.documentElement.classList.contains('is-avplay') && window.__avplay.includes('close')));
-    await nav('back');
-    check('Leaving Cameras stops every stream', (await call('where')).view === 'home' && await current.evaluate(() => document.querySelectorAll('.cam .cam-live[src]').length === 0));
+    // Keep the tile images: Home empties the view, so querying the page afterwards would prove nothing.
+    const holdLive = () => current.evaluate(() => { window.__live = [...document.querySelectorAll('.cam .cam-live')]; });
+    const liveLeft = () => current.evaluate(() => window.__live.length === 3 && window.__live.every(i => !i.getAttribute('src')));
+    await holdLive(); await nav('back');
+    check('Leaving Cameras stops every stream', (await call('where')).view === 'home' && await liveLeft());
     await act('util.cameras'); await current.waitForFunction(() => document.querySelectorAll('.cam .cam-live[src]').length === 3);
-    await current.evaluate(() => window.__setHidden(true)); await current.waitForTimeout(100);
-    check('Hiding CleanFrame closes Cameras and every stream', (await call('where')).view === 'home' && await current.evaluate(() => document.querySelectorAll('.cam .cam-live[src]').length === 0));
+    await holdLive(); await current.evaluate(() => window.__setHidden(true)); await current.waitForTimeout(100);
+    check('Hiding CleanFrame closes Cameras and every stream', (await call('where')).view === 'home' && await liveLeft());
     await current.evaluate(() => window.__setHidden(false));
     const layoutOf = () => current.evaluate(() => [...document.querySelectorAll('.cam')].map(b => b.style.cssText).join('|'));
     const settled = await (async () => { await act('util.cameras'); await current.waitForFunction(() => document.querySelectorAll('.cam.is-live').length === 3); const l = await layoutOf(); await nav('back'); return l; })();
@@ -844,25 +849,39 @@ try {
     check('Cameras open in their final places from remembered shapes', first === settled, { first, settled });
     await nav('back'); await closePage();
     // As on the TV: the MJPEG stream never reports a load, so shapes come from the snapshot alone.
+    // Snapshots wait for the test to release them, so the order of events is fixed.
+    let releaseSnaps, snapGate = new Promise(r => { releaseSnaps = r; });
     await page({}, async p => {
-      p.__expectedFailures.push('stream.mjpeg');
-      await p.addInitScript(() => localStorage.setItem('cleanframe.controls.v1', JSON.stringify({ go2rtc: 'http://192.168.1.2:1984', cameras: [{ name: 'Front door', src: 'doorbell' }, { name: 'Backyard', src: 'backyard', ratio: '10:3' }, { name: 'Nursery', src: 'nursery' }] })));
+      p.__expectedFailures.push('stream.mjpeg', 'frame.jpeg');
+      await p.addInitScript(() => {
+        localStorage.setItem('cleanframe.controls.v1', JSON.stringify({ go2rtc: 'http://192.168.1.2:1984', cameras: [{ name: 'Front door', src: 'doorbell' }, { name: 'Backyard', src: 'backyard', ratio: '16:9' }, { name: 'Nursery', src: 'nursery' }] }));
+        const I = window.Image; window.__snaps = []; window.Image = function (w, h) { const i = new I(w, h); window.__snaps.push(i); return i; };
+      });
       await p.route('http://192.168.1.2:1984/api/stream.mjpeg**', () => { /* Hangs, like a live MJPEG stream on the TV. */ });
       await p.route('http://192.168.1.2:1984/api/frame.jpeg**', async route => {
+        await snapGate;
         const size = { doorbell: [480, 640], backyard: [1920, 576], nursery: [1280, 720] }[new URL(route.request().url()).searchParams.get('src')];
         await route.fulfill({ contentType: 'image/jpeg', body: Buffer.from(await jpeg(...size), 'base64') });
       });
     });
+    const backyardRatio = () => current.evaluate(() => { const r = document.querySelectorAll('.cam')[1].getBoundingClientRect(); return r.width / r.height; });
     await act('util.cameras');
-    const configured = await current.evaluate(() => { const r = document.querySelectorAll('.cam')[1].getBoundingClientRect(); return r.width / r.height; });
-    check('A configured shape places its tile before any picture arrives', Math.abs(configured - 10 / 3) < .02, configured);
+    const configured = await backyardRatio();
+    check('A configured shape places a camera never seen before', Math.abs(configured - 16 / 9) < .02, configured);
+    releaseSnaps();
     await current.waitForFunction(() => [...document.querySelectorAll('.cam .cam-still')].every(i => i.naturalWidth));
     await current.waitForTimeout(100);
     const snapped = await current.evaluate(() => [...document.querySelectorAll('.cam')].map(b => { const r = b.getBoundingClientRect(), i = b.querySelector('.cam-still'); return { ratio: r.width / r.height, natural: i.naturalWidth / i.naturalHeight, live: b.classList.contains('is-live') }; }));
-    check('A quick snapshot fills each tile and teaches its shape while the stream connects', snapped.every(t => Math.abs(t.ratio - t.natural) < .02 && !t.live), snapped);
-    check('Learned shapes are remembered for next time', await current.evaluate(() => { const m = JSON.parse(localStorage.getItem('cleanframe.cameras.v1')); return Math.abs(m.doorbell.r - .75) < .01 && Math.abs(m.nursery.r - 16 / 9) < .01; }));
+    check('A quick snapshot fills each tile and teaches its real shape while the stream connects', snapped.every(t => Math.abs(t.ratio - t.natural) < .02 && !t.live), snapped);
     await nav('back');
-    check('Leaving Cameras drops pending snapshots and streams', await current.evaluate(() => document.querySelectorAll('.cam .cam-live[src]').length === 0));
+    snapGate = new Promise(() => { /* These snapshots never arrive. */ });
+    await act('util.cameras');
+    const learned = await backyardRatio();
+    check('A learned shape wins over the configured one on the next open', Math.abs(learned - 1920 / 576) < .02, learned);
+    await current.evaluate(() => { window.__live = [...document.querySelectorAll('.cam .cam-live')]; window.__pending = window.__snaps.filter(i => /frame\.jpeg/.test(i.src) && !i.naturalWidth); });
+    await nav('back');
+    const cancelled = await current.evaluate(() => ({ snaps: window.__pending.map(i => [i.getAttribute('src'), !!i.onload]), live: window.__live.map(i => i.getAttribute('src')) }));
+    check('Leaving Cameras cancels pending snapshots and streams', cancelled.snaps.length === 3 && cancelled.snaps.every(([src, on]) => !src && !on) && cancelled.live.every(src => !src), cancelled);
   });
   section = 'Run integrity';
   report.sourceAfter = hashes();

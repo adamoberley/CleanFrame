@@ -281,7 +281,7 @@ function moduleFactory(ctx) {
     }).then(function (result) { unlink(tmp); inflight = null; return result; }, function () {
       // Never return stale current metadata as a successful refresh, or leak exec output.
       try { unlink(tmp); } catch (e) { /* A later start removes owned cache debris. */ }
-      inflight = null; lastError = true; throw new Error('Art unavailable');
+      inflight = null; if (g === generation) lastError = true; throw new Error('Art unavailable');
     });
     return inflight;
   }
@@ -526,7 +526,7 @@ function moduleFactory(ctx) {
     return starting;
   }
   function stop() {
-    running = false; generation++; current = null; revisions = []; lastRead = 0; look = null; lookAt = 0; lookTried = 0; lookRead = null; lightsBusy = false;
+    running = false; generation++; current = null; revisions = []; lastRead = 0; lastError = false; lookError = null; look = null; lookAt = 0; lookTried = 0; lookRead = null; lightsBusy = false;
     mqttStop();
     var old = server; server = null; starting = null;
     if (rejectStart) { rejectStart(new Error('Bridge stopped')); rejectStart = null; }

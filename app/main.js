@@ -42,7 +42,7 @@
   /* Optional owner controls, configured on the TV (never in public source):
      cleanframe.controls.v1 = { lights: true, go2rtc: 'http://192.168.x.y:1984', cameras: [{ name, src, full, ratio }] }.
      src is the go2rtc stream for the MJPEG grid; full, if set, is the full-quality stream for full screen.
-     ratio, if set ("3:4"), places the tile before any frame arrives.
+     ratio, if set ("3:4"), places the tile until a snapshot has shown the camera's real shape.
      Without it, Home shows only Apps and Settings. */
   // A camera's shape, as "3:4" or a number; 0 when unknown.
   function cameraRatioValue(v) {
@@ -456,7 +456,7 @@
     } catch (e) { finish(false); }
   }
   /* Cameras open in their final places at once: each camera's shape comes from its config
-     (ratio) or from the last time it was seen (saved per stream in cleanframe.cameras.v1).
+     (ratio) or, once seen, from its last snapshot (saved per stream in cleanframe.cameras.v1).
      Each tile shows a quick JPEG snapshot, then the live stream over it. */
   var CAM_KEY = 'cleanframe.cameras.v1';
   function cameraMemory() { var m = null; try { m = JSON.parse(localStorage.getItem(CAM_KEY)); } catch (e) { m = null; } return m && typeof m === 'object' ? m : {}; }
@@ -467,7 +467,7 @@
   }
   function openCameras() {
     var mem = cameraMemory(), ratios = {};
-    CONTROLS.cameras.forEach(function (cam, i) { var r = cam.ratio || cameraRatioValue(mem[cam.src] && mem[cam.src].r); if (r) ratios[i] = r; });
+    CONTROLS.cameras.forEach(function (cam, i) { var r = cameraRatioValue(mem[cam.src] && mem[cam.src].r) || cam.ratio; if (r) ratios[i] = r; });
     push({ id: 'cameras', f: { i: 0 }, full: false, ratios: ratios });
   }
   function openSettings() { push({ id: 'settings', f: { id: S.settingsFocus } }); }
@@ -808,7 +808,8 @@
     point: function (t, z, i) { if (z === 'cam') { t.f.i = i; this.key(t, 'ok'); } }
   };
   function cameraURL(cam) { return CONTROLS.go2rtc + '/api/stream.mjpeg?src=' + encodeURIComponent(cam.src); }
-  function cameraStillURL(cam) { return CONTROLS.go2rtc + '/api/frame.jpeg?src=' + encodeURIComponent(cam.src); }
+  // Unique per request: the browser would otherwise reuse the first snapshot on every later open.
+  function cameraStillURL(cam) { return CONTROLS.go2rtc + '/api/frame.jpeg?src=' + encodeURIComponent(cam.src) + '&t=' + Date.now(); }
   /* Full screen plays the camera's full-quality stream through the TV's own player (AVPlay, a
      hardware video layer behind the page) as go2rtc HLS: repackaged, not re-encoded. The player
      needs the avplay, network.public and tv.audio privileges and a Partner-signed package.
@@ -861,6 +862,7 @@
     // Dropping the src closes each MJPEG connection; nothing streams once the view is gone.
     Array.prototype.forEach.call(sheetView.querySelectorAll('.cam'), function (b) {
       var im = b.querySelector('.cam-live');
+      clearTimeout(b._retry);
       if (im) { im.onload = im.onerror = null; im.removeAttribute('src'); }
       if (b._snap) { b._snap.onload = b._snap.onerror = null; b._snap.src = ''; b._snap = null; }
     });
@@ -1050,22 +1052,24 @@
   function refreshWeather() {
     var xhr, url;
     if (!WEATHER || weatherBusy || S.c.clock !== 'weather' || document.hidden || Date.now() - weatherAt < 20 * 60000) return;
-    weatherBusy = true; weatherAt = Date.now();
+    weatherBusy = true;
+    // A failed read is retried after 90 s (for example when the TV wakes before Wi-Fi is up).
+    function failed() { weatherBusy = false; weatherAt = Date.now() - 20 * 60000 + 90000; }
     url = 'https://api.open-meteo.com/v1/forecast?latitude=' + WEATHER.lat + '&longitude=' + WEATHER.lon + '&current=temperature_2m,weather_code,is_day&temperature_unit=' + (WEATHER.unit === 'c' ? 'celsius' : 'fahrenheit');
     try {
       xhr = new window.XMLHttpRequest(); xhr.open('GET', url, true); xhr.timeout = 8000;
       xhr.onload = function () {
         var c;
-        weatherBusy = false;
         try { c = JSON.parse(xhr.responseText).current; } catch (e) { c = null; }
-        if (xhr.status !== 200 || !c || typeof c.temperature_2m !== 'number' || typeof c.weather_code !== 'number') return;
+        if (xhr.status !== 200 || !c || typeof c.temperature_2m !== 'number' || typeof c.weather_code !== 'number') { failed(); return; }
+        weatherBusy = false; weatherAt = Date.now();
         weatherNow = { temp: Math.round(c.temperature_2m), kind: weatherKind(c.weather_code), day: c.is_day !== 0, at: Date.now() };
         try { localStorage.setItem('cleanframe.weather.last', JSON.stringify(weatherNow)); } catch (e) { /* Memory only. */ }
         render();
       };
-      xhr.onerror = xhr.ontimeout = function () { weatherBusy = false; };
+      xhr.onerror = xhr.ontimeout = failed;
       xhr.send();
-    } catch (e) { weatherBusy = false; }
+    } catch (e) { failed(); }
   }
   function weatherHtml() {
     // A reading older than three hours (or with no time) is not shown: stale weather misleads.
@@ -1519,8 +1523,9 @@
         // Streams run only where seen: every tile in the grid, only the chosen one in full screen,
         // and none while the TV player shows it.
         var wanted = document.documentElement.className.indexOf('is-avplay') < 0 && (!t.full || i === t.f.i);
-        if (!wanted && im.getAttribute('src')) { im.onload = im.onerror = null; im.removeAttribute('src'); b.className = b.className.replace(' is-live', ''); }
-        if (wanted && !still.getAttribute('src') && !b._snap) {
+        if (!wanted && im.getAttribute('src')) { clearTimeout(b._retry); im.onload = im.onerror = null; im.removeAttribute('src'); b.className = b.className.replace(' is-live', ''); }
+        // A failed snapshot is tried again at most every 10 s, not on every redraw.
+        if (wanted && !still.getAttribute('src') && !b._snap && !(Date.now() - (b._snapFailed || 0) < 10000)) {
           // A plain JPEG snapshot shows something quickly and tells us the camera's shape.
           b._snap = new Image();
           b._snap.onload = function () {
@@ -1529,13 +1534,20 @@
             still.src = snap.src;
             learn(snap.naturalWidth / snap.naturalHeight);
           };
-          b._snap.onerror = function () { b._snap = null; };
+          b._snap.onerror = function () { b._snap = null; b._snapFailed = Date.now(); };
           b._snap.src = cameraStillURL(cam);
         }
         if (wanted && !im.getAttribute('src')) {
           im.className = 'cam-live';
-          im.onerror = function () { im.className = 'cam-live is-failed'; };
-          // Where the browser reports frames, mark the tile live and learn the shape.
+          // A stream that drops (camera offline, go2rtc restarting) reconnects every 10 s while shown.
+          im.onerror = function () {
+            im.className = 'cam-live is-failed'; clearTimeout(b._retry);
+            b._retry = setTimeout(function () {
+              if (!im.getAttribute('src') || !document.body.contains(im)) return;
+              im.removeAttribute('src'); im.className = 'cam-live'; im.src = cameraURL(cam);
+            }, 10000);
+          };
+          // Where the browser reports frames (not the TV, for MJPEG), hide the still and learn the shape.
           im.onload = function () {
             if (!im.naturalWidth || !im.naturalHeight) return;
             if (b.className.indexOf('is-live') < 0) b.className += ' is-live';

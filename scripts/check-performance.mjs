@@ -148,11 +148,14 @@ try {
   report.appearanceLoads = loadTimes;
   check('All appearance changes apply within bounded browser budget', loadTimes.every(r => r.ms < report.budgets.appearanceMaximumMs), loadTimes);
   await page.waitForLoadState('networkidle');
-  const beforeSame = await memory();
-  for (let i = 0; i < 4; i++) { await call('look', {}); await ready(); }
-  await page.waitForTimeout(100);
+  // Returning to Home re-reads the bridge; an unchanged photo must not be fetched or rebuilt.
+  await scene('home');
+  const beforeSame = await memory(), artHits = { meta: 0, image: 0 };
+  page.on('request', r => { if (r.url().endsWith('/current.json')) artHits.meta++; else if (r.url().endsWith('/image.jpg')) artHits.image++; });
+  for (let i = 0; i < 14 && !artHits.meta; i++) { await page.evaluate(() => window.dispatchEvent(new Event('focus'))); await page.waitForTimeout(500); }
+  await page.waitForTimeout(300); await ready();
   const afterSame = await memory();
-  check('Re-applying the current look reuses the Art bundle', beforeSame.images.elements === afterSame.images.elements && JSON.stringify(beforeSame.images.sources) === JSON.stringify(afterSame.images.sources), { before: beforeSame.images, after: afterSame.images });
+  check('A Home refresh with an unchanged photo reuses the Art bundle', artHits.meta > 0 && artHits.image === 0 && beforeSame.images.elements === afterSame.images.elements && JSON.stringify(beforeSame.images.sources) === JSON.stringify(afterSame.images.sources), { artHits, before: beforeSame.images, after: afterSame.images });
   // Prime the small cycle before comparing retained objects.
   for (const patch of cycle) { await call('look', patch); await ready(); }
   await page.waitForTimeout(300);
