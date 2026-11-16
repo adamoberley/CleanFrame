@@ -186,8 +186,8 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000}
 .bg-photo.f-type .ph-row.is-sel .ph-group{opacity:.92}
 .bg-photo.f-type .ph-row.is-focus .ph-group,.bg-photo.f-type .ph-row.is-lifted .ph-group{opacity:1}
 .bg-photo.f-type .ph-row.k-ph .ph-group{opacity:.5}
-.ph-plate{position:absolute;z-index:1;left:80px;top:0;width:360px;height:106px;border-radius:53px;overflow:hidden;opacity:0;scale:.94;transform-origin:0 50%;transition:opacity 160ms linear,scale var(--spring-t) var(--spring);transform:translateZ(0)}
-.ph-plate.on-focus,.ph-plate.on-lift{opacity:1;scale:1}
+.ph-plate{position:absolute;z-index:1;left:80px;top:0;width:360px;height:106px;border-radius:53px;overflow:hidden;opacity:0;transform:translateZ(0) scale(.94);transform-origin:0 50%;transition:opacity 160ms linear,transform var(--spring-t) var(--spring)}
+.ph-plate.on-focus,.ph-plate.on-lift{opacity:1;transform:translateZ(0) scale(1)}
 .ph-plate.on-sel{opacity:.5}
 .ph-plate.is-outgoing{opacity:0}
 .ph-plate.is-preparing{opacity:0!important;transition:none!important}
@@ -398,8 +398,9 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000}
 .f-type .quiet-utils .u.is-focus .u-content{transform:scale(1.05)}
 .f-type .util-focus-label.is-on{transform:scale(1.05);transform-origin:50% 50%}
 .f-type.l-list .util-focus-label.is-on{transform-origin:100% 50%}
-.ut-lens{left:0;top:0;height:60px;border-radius:30px;pointer-events:none;-webkit-clip-path:inset(0 round 30px);clip-path:inset(0 round 30px)}
+.ut-lens{left:0;top:0;transform-origin:50% 50%;height:60px;border-radius:30px;pointer-events:none;-webkit-clip-path:inset(0 round 30px);clip-path:inset(0 round 30px)}
 .l-list .ut-lens .scrim{display:none}
+.l-list .ut-lens{transform-origin:100% 50%}
 .l-list .quiet-utils.is-both .u-label{max-width:330px}
 .l-list .quiet-utils.is-both .u .ico{width:36px;height:36px}
 .l-list .quiet-utils.is-both .u[data-action="util.settings"] .ico{width:34px;height:34px}
@@ -503,7 +504,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000}
 .settings-status .setting-error{max-width:840px;color:var(--warn)}
 .setting-choice.setting-retry{width:auto;min-height:60px;margin-top:16px;padding:10px 24px;font-size:28px;line-height:36px;border-radius:16px}
 .setting-choice:focus-visible,.settings-group:focus-visible{outline:2px solid currentColor;outline-offset:3px}
-.is-rapid .ph-plate{scale:1;transition:opacity 90ms linear}
+.is-rapid .ph-plate{transform:translateZ(0) scale(1);transition:none}
 .is-rapid .ph-group{transition:opacity 90ms linear,transform 110ms var(--ease)}
 @media(prefers-reduced-motion:reduce){.panel-content,.ph-group,.tile-content,.u-content,.util-focus-label,.quiet-utils .u .ico{transform:none!important}.tile-content{transition:opacity 120ms linear!important}}
 
@@ -517,7 +518,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000}
 .s-head .btn>span,.s-head .btn>.ico{position:relative;z-index:1}
 .f-type .s-head .btn.is-focus,.f-type .header-utils .u.is-focus{transform:scale(1.05)}
 .f-glass .s-head .btn.is-focus::before,.f-glass .header-utils .u.is-focus::before{content:"";position:absolute;left:0;right:0;top:2px;height:60px;border-radius:30px;background:var(--plate);box-shadow:var(--plate-edge);pointer-events:none}
-@media(prefers-reduced-motion:reduce){.s-head .btn,.header-utils .u,.m-tint .mat-img,.m-tint .mat-scrim{transform:none!important}.ut-lens{transition:opacity 120ms linear!important}.ph-plate{scale:1!important}.f-glass .ph-row.is-focus .ph-group{transform:none}}
+@media(prefers-reduced-motion:reduce){.s-head .btn,.header-utils .u,.m-tint .mat-img,.m-tint .mat-scrim{transform:none!important}.ut-lens{transition:opacity 120ms linear!important}.ph-plate{transform:translateZ(0)!important}.f-glass .ph-row.is-focus .ph-group{transform:none}}
 
 /* Saved display choices alter content, not app identity or editing state. */
 .stage.is-reflow *{transition:none!important;animation:none!important}

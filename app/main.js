@@ -1029,7 +1029,7 @@
       utPlates[utPlateIndex].className = 'ph-plate ut-lens is-outgoing';
       utPlateIndex = 1 - utPlateIndex; el = utPlates[utPlateIndex];
       el.className = 'ph-plate ut-lens is-preparing';
-      el.style.width = width + 'px'; el.style.transform = 'translate3d(' + x + 'px,' + y + 'px,0)';
+      el.style.width = width + 'px'; el.style.left = x + 'px'; el.style.top = y + 'px'; // Position stays out of transform: the spring scale must not scale it.
       fieldTransform(utFields[utPlateIndex], x, y, width, 60);
       el.offsetWidth;
       utPlateKey = key;
@@ -1194,7 +1194,7 @@
       plateEl = phPlates[photoPlateIndex]; fieldEl = phFields[photoPlateIndex];
       plateEl.className = 'ph-plate is-preparing';
       plateEl.style.width = width + 'px'; plateEl.style.height = height + 'px';
-      plateEl.style.transform = 'translate3d(0,' + y + 'px,0)';
+      plateEl.style.top = y + 'px';
       fieldTransform(fieldEl, PH_LEFT, y, width, height);
       plateEl.offsetWidth; // Establish zero opacity before the incoming crossfade.
       photoPlateKey = key;
@@ -1711,9 +1711,9 @@
   var lastMoveAt = 0, rapidTimer = null;
   function rapidMove() {
     var now = Date.now(), root = document.documentElement;
-    if (now - lastMoveAt < 240) root.className = root.className.indexOf('is-rapid') < 0 ? (root.className + ' is-rapid').replace(/^ /, '') : root.className;
+    if (now - lastMoveAt < 360) root.className = root.className.indexOf('is-rapid') < 0 ? (root.className + ' is-rapid').replace(/^ /, '') : root.className;
     lastMoveAt = now; clearTimeout(rapidTimer);
-    rapidTimer = setTimeout(function () { root.className = root.className.replace(/ ?is-rapid/, ''); }, 260);
+    rapidTimer = setTimeout(function () { root.className = root.className.replace(/ ?is-rapid/, ''); }, 380);
   }
   document.addEventListener('keyup', function (ev) { delete heldKeys[ev.keyCode]; });
   window.addEventListener('blur', function () { heldKeys = {}; });
