@@ -21,7 +21,7 @@ Art Mode's picture processing is not documented, so the owner matched it by eye 
 | −5 (cool) | 0.41 | 0.86 | 0.50 | rgb(246,238,222) | 1 / 1.02 / 1.15 |
 | +5 (warm) | 0.41 | 0.86 | 0.48 | rgb(250,212,160) | 1 / 1.03 / 1.19 |
 
-Values in between are interpolated linearly. The bridge reads Art Mode's `brightness` and `color_temperature` read-only from the TV's own Art channel (`ws://127.0.0.1:8001/api/v2/channels/com.samsung.art-app`; no pairing token, one short connection addressed to the Art app client, read in the background so `current.json` never waits, refreshed at most every 3 s) and adds them to `current.json` as `look`. The widget keeps the last good value in `cleanframe.art.look.v1`, so the look survives an unavailable bridge; with no value it uses colour temperature 0. Art brightness was calibrated the same way at 2, 5 and 10 (colour temperature +3), relative to the brightness-5 look above, and is interpolated piecewise-linearly between them (extrapolated below 2, with dimming floored at 0.3):
+Values in between are interpolated linearly. The bridge reads Art Mode's `brightness` and `color_temperature` read-only from the TV's own Art channel (`ws://127.0.0.1:8001/api/v2/channels/com.samsung.art-app`; no pairing token, one short connection addressed to the Art app client, at most one read at a time and a new one at most 3 s after the last finished; when the last good look is over 3 s old, `current.json` waits up to 800 ms for that read, see [Loopback HTTP](#loopback-http)) and adds them to `current.json` as `look`. The widget keeps the last good value in `cleanframe.art.look.v1`, so the look survives an unavailable bridge; with no value it uses colour temperature 0. Art brightness was calibrated the same way at 2, 5 and 10 (colour temperature +3), relative to the brightness-5 look above, and is interpolated piecewise-linearly between them (extrapolated below 2, with dimming floored at 0.3):
 
 | Art brightness | dimming | image brightness | contrast | saturate | tint R/G/B |
 |---|---|---|---|---|---|
@@ -42,26 +42,28 @@ npm run pack:art
 `dist/cleanframe-art.vplugin` is ignored output. The packer is deterministic and includes only the checked-in `index.js` and manifest, plus the doorbell picture-in-picture build as `pip.b64.json` when `npm run build:pip` has produced one ([`native/doorbell-pip`](../native/doorbell-pip/README.md)); never configuration, a cache or artwork. Its text JSON is:
 
 ```json
-{"format":"vetro-plugin","version":1,"manifest":{"id":"cleanframe-art","name":"CleanFrame Art bridge","version":"1.4.0","apiVersion":1,"permissions":["exec"],"entry":"index.js"},"files":{"index.js":"<source text>"}}
+{"format":"vetro-plugin","version":1,"manifest":{"id":"cleanframe-art","name":"CleanFrame Art bridge","version":"1.5.0","apiVersion":1,"permissions":["exec"],"entry":"index.js"},"files":{"index.js":"<source text>"}}
 ```
 
 `manifest.json` is not a `files` entry. The packer enforces the 20-file / 512 KiB envelope; this shard uses one file, or two with the doorbell picture-in-picture build. The module is ES5, run by Vetro's Node 12 on the TV, and exports `module.exports(ctx)` returning `{start, stop, status, route}`. It requires this Vetro API version 1 contract:
 
 - `ctx.dir`: an existing directory writable as the process UID; the shard canonicalises it and creates a private `art-cache/` child.
 - `ctx.execute(command, timeoutMs)`: root execution, returning a Promise for `{stdout, stderr, exit_code, timed_out}`. The host must enforce the timeout and its 1 MiB output limit. The shard requests 4 seconds per command and rejects excessive output/errors without exposing diagnostics.
-- `ctx.config.get/set`: private configuration. The shard reads `port` (absent: `8643`), `address` (see below) and the optional `pip: { stream, seconds }` for the doorbell picture-in-picture. Only this host-managed `config.json` is expected to survive shard upgrades. The shard does not edit it directly.
+- `ctx.config.get/set`: private configuration. The shard reads `port` (absent: `8643`), `address` and `key` (see below) and the optional `pip: { stream, seconds }` for the doorbell picture-in-picture. Only this host-managed `config.json` is expected to survive shard upgrades. The shard does not edit it directly.
 - Vetro calls `start()` and `stop()` without awaiting their returned Promises; inspect `status()` and the listener after activation. Repeated starts coalesce. Stop closes the listener, destroys accepted sockets and invalidates pending refresh results; an already-issued root command remains subject to the host timeout. Restart waits for that refresh to settle before cleaning its cache. `status()` is safe local status; optional host `route()` returns 404, never an image or root API.
 
 The parent maintainer handles import/start under a separate device task, after checking the real host's loader/schema and context API against this contract. No unattended installer or admin-token HTTP route is supplied. Build preparation here does not contact Vetro or a TV.
 
 ## Loopback HTTP
 
-The shard defaults to **127.0.0.1**, port 8643. Private configuration may set `address` to the TV's own IPv4 interface address when its web runtime blocks loopback. Wildcard and nonlocal bindings are rejected. Every HTTP connection must originate from the exact bound address (including IPv4-mapped notation); other LAN clients receive 403 before any artwork response. It accepts GET, plus `POST`/`OPTIONS` on `/lights`, and at most eight concurrent TCP connections and eight active responses. Root preference/copy work coalesces into one refresh; successful reads have a 1.5-second reuse window.
+The shard defaults to **127.0.0.1**, port 8643. Private configuration may set `address` to the TV's own IPv4 interface address when its web runtime blocks loopback. Wildcard and nonlocal bindings are rejected. Every HTTP connection must originate from the exact bound address (including IPv4-mapped notation); other LAN clients receive 403 before any artwork response. It accepts GET, `POST` on `/lights`, and CORS preflight `OPTIONS` on its three paths, and at most eight concurrent TCP connections and eight active responses. Root preference/copy work coalesces into one refresh; successful reads have a 1.5-second reuse window.
 
 | Request | Result |
 | --- | --- |
-| `GET /current.json` | `{revision, contentId, imageUrl, width, height, look?}`; `look` is Art Mode's `{brightness, colorTemperature}` when read; `Cache-Control: no-store` |
-| `POST /lights` | Fires the fixed Vetro rule trigger `cleanframe-lights` (Vetro then publishes MQTT); the body is ignored. 204 on success, 429 within 1.5 s of the previous press, 502 if Vetro fails or takes over 5 s |
+| `GET /current.json` | `{revision, contentId, imageUrl, width, height, look?}`; `look` is Art Mode's `{brightness, colorTemperature}` when read; `Cache-Control: no-store`. When the last good look is over 3 s old, the reply waits up to 800 ms for a fresh read; if that read is slower, it carries the last known look (or none) |
+| `POST /lights` | Fires the fixed Vetro rule trigger `cleanframe-lights` (Vetro then publishes MQTT); the body is ignored. 204 on success; 429 while a press is still running or within 1.5 s of the last successful one; 502 if Vetro fails or takes over 5 s (the next press tries again) |
+| `OPTIONS` on `/current.json`, `/art/<revision>/image.jpg` or `/lights` | CORS preflight: 204 with `Access-Control-Allow-Methods` (`GET`, or `POST` for `/lights`), `Access-Control-Allow-Headers: X-CleanFrame-Key` and `Access-Control-Max-Age: 600`. Needs no key, but the client and Origin checks still apply |
+| Any request other than preflight without the configured `X-CleanFrame-Key` | 403 with no body |
 | `GET /art/<64 lowercase hex revision>/image.jpg` | Immutable JPEG for that exact retained revision |
 | Unknown/evicted/mismatched revision, query variants, any other path | 404 |
 | Unsupported/corrupt preference or failed copy | 503 with only `{"error":"Art unavailable"}` |
@@ -70,13 +72,21 @@ The shard defaults to **127.0.0.1**, port 8643. Private configuration may set `a
 
 Opaque `Origin: null` and nonweb `file:`, `widget:`, `wgt:` or `tizen:` origins receive CORS permission. Requests without Origin are accepted for packaged/native clients. An ordinary HTTP browser preview cannot use the real service: browser tests substitute synthetic bridge responses with explicit CORS. No listener address, source path, rule, topic or arbitrary command can be selected by HTTP. There is no artwork access for other LAN devices and no authentication/session endpoint. `/lights` can only fire the one fixed Vetro rule; it is the bridge's only path towards Home Assistant.
 
+### Shared key
+
+The client-address and Origin checks keep other LAN devices out, but not other pages on the TV itself: a plain page or sandboxed iframe in the TV's own browser is also a local client and can send `Origin: null`. Without a key, such a page could read `/current.json` and the photo and press Lights. **The owner should set a key.**
+
+- Set private config `key` to a random string of 24 to 256 printable ASCII characters without spaces (for example `openssl rand -hex 24`), and the widget's localStorage `cleanframe.art.key` to the same value. The widget sends it as the `X-CleanFrame-Key` header.
+- With a key, every request except CORS preflight must carry `X-CleanFrame-Key` with exactly that value; anything else gets 403 with no body. The comparison is constant-time (`crypto.timingSafeEqual` on SHA-256 digests of equal length). A key that is set but too short, too long or not a string stops the bridge from starting (`Invalid bridge key`) rather than running unprotected.
+- Without a key the bridge behaves as before and `status()` reports `keyed: false`. The key is never returned by HTTP or `status()`. Do not commit it.
+
 Revision is SHA-256 of safe metadata plus the copied bytes. The bridge retains at most two revision files and one bounded temporary copy (up to about 36 MiB). A previous retained URL still serves its own bytes; an evicted URL returns 404 rather than the latest image. An open response holds its own descriptor while cache eviction proceeds. Plugin restart/upgrade discards this disposable bridge cache and rebuilds from the preference; the widget cache is independent.
 
 ## Other connections and files
 
-- **Art Mode settings:** read-only `get_artmode_settings` over the TV's own Art channel (`ws://127.0.0.1:8001/api/v2/channels/com.samsung.art-app`), addressed to the Art app's client id, in the background and at most every 3 s. Only integer brightness (0–10) and colour temperature (−5..+5) are kept.
+- **Art Mode settings:** read-only `get_artmode_settings` over the TV's own Art channel (`ws://127.0.0.1:8001/api/v2/channels/com.samsung.art-app`), addressed to the Art app's client id, one read at a time and a new one at most 3 s after the last finished; `current.json` waits up to 800 ms for it only when the last good look is over 3 s old. Only integer brightness (0–10) and colour temperature (−5..+5) are kept.
 - **Vetro's MQTT login:** with `pip.stream` configured, the shard reads `/opt/usr/home/owner/share/vetro-mqtt.json` (Vetro's broker settings, readable by the shard's user), connects to that broker with its own random client id (plain or TLS as configured), subscribes to `vetro/cleanframe/doorbell` and ignores retained messages. The login never leaves the TV and is never returned by HTTP or status.
-- **Doorbell picture-in-picture:** `ring` starts the bundled overlay as root only from a root-only copy whose hashes match those recorded at unpack; see [`native/doorbell-pip`](../native/doorbell-pip/README.md).
+- **Doorbell picture-in-picture:** `ring` starts the bundled overlay as root only from a root-only copy whose hashes match those recorded at unpack. Before starting it stops a previous `systemd-run` overlay and, when `pkill` exists, a fallback `setsid` one (a `pkill -f` pattern anchored to `dotnet <root copy's dll>`, so it never matches the root shell itself), and keeps the previous run's log as `pip.log.1`; see [`native/doorbell-pip`](../native/doorbell-pip/README.md).
 
 ## Preference and file handling
 
