@@ -4,7 +4,7 @@ Home always uses the current uploaded Art Mode photo from the [local bridge](art
 
 ## Art Mode surfaces
 
-Home uses the original image texture with the calibrated Art look, outlined text and static frosted focus. Sheets and the dock use a frosted copy made once per photo (`frostSheet` in `app/main.js`): 480×270 with a one-time canvas blur, stored across launches, never made on navigation. A small stored preview, tagged with its photo's revision, is shown softened at launch while the full photo decodes, only when that revision is the current one. The no-cache fallback is a tiny inline neutral SVG. Never run live blur or pixel analysis on the TV during navigation. Owner photos stay in private runtime caches and never enter the source or exported widget. Atomic bundles swap the photo, dock mat and sheet backdrop together after readiness and preference-write checks.
+Home uses the original image texture with the calibrated Art look, outlined text and static frosted focus. Sheets use a frosted copy made once per photo (`frostSheet` in `app/main.js`): 480×270 with a one-time canvas blur, stored across launches, never made on navigation. A small stored preview, tagged with its photo's revision, is shown softened at launch while the full photo decodes, only when that revision is the current one. The no-cache fallback is a tiny inline neutral SVG. Never run live blur or pixel analysis on the TV during navigation. Owner photos stay in private runtime caches and never enter the source or exported widget. Atomic bundles swap the photo and sheet backdrop together after readiness and preference-write checks.
 
 ## Icons
 
