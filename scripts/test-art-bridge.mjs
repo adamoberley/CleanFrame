@@ -103,6 +103,23 @@ test('current.json waits briefly for a stale Art look, then reports the last goo
     assert.deepEqual(Object.keys(JSON.parse(res.body)).sort(), ['contentId', 'height', 'imageUrl', 'look', 'revision', 'width']);
   }, { lookMaxAgeMs: 600, lookWaitMs: 150 }); // Windows wide enough for a busy CI runner.
 });
+test('current.json?quick=1 names the photo at once, carries no look, and starts the settings read for the full request', async () => {
+  await harness(async ({ port, setSettings }) => {
+    let reads = 0, release;
+    setSettings(() => { reads++; return new Promise(r => { release = () => r({ brightness: 4, colorTemperature: 2 }); }); });
+    const t = Date.now(), quick = await get(port, '/current.json?quick=1'), took = Date.now() - t;
+    assert.equal(quick.status, 200); assert.ok(took < 140, 'quick took ' + took);
+    const body = JSON.parse(quick.body);
+    assert.equal(body.look, undefined); assert.match(body.revision, /^[a-f0-9]{64}$/); assert.equal(reads, 1);
+    // The full request joins the read the quick one started, and carries its look.
+    const full = get(port, '/current.json'); await sleep(20); release();
+    const fullBody = JSON.parse((await full).body);
+    assert.deepEqual(fullBody.look, { brightness: 4, colorTemperature: 2 }); assert.equal(fullBody.revision, body.revision); assert.equal(reads, 1);
+    // Preflight allows it; other queries are not served.
+    assert.equal((await get(port, '/current.json?quick=1', 'null', 'OPTIONS')).status, 204);
+    for (const path of ['/current.json?quick=0', '/current.json?quick=1&x=1', '/current.json?']) assert.equal((await get(port, path)).status, 404, path);
+  }, { lookWaitMs: 150 });
+});
 test('a changed Art look shows on the first current.json when the read answers within 800 ms', async () => {
   await harness(async ({ port, setSettings }) => {
     let value = { brightness: 5, colorTemperature: 3 }, reads = 0;

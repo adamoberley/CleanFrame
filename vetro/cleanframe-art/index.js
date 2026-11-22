@@ -502,7 +502,7 @@ function moduleFactory(ctx) {
     socket.on('close', retry);
   }
   function handler(req, res) {
-    var origin = req.headers.origin, match, allow, closed = false, released = false;
+    var origin = req.headers.origin, match, allow, quick, closed = false, released = false;
     // Some Frame web runtimes block loopback. When bound to the TV's own
     // interface, accept only connections originating from that exact address.
     if (!localClient(address, req.socket.remoteAddress)) { res.writeHead(403); res.end(); return; }
@@ -510,7 +510,9 @@ function moduleFactory(ctx) {
     res.setHeader('Access-Control-Allow-Origin', origin || '*');
     res.setHeader('Vary', 'Origin, X-CleanFrame-Key'); res.setHeader('X-Content-Type-Options', 'nosniff');
     match = /^\/art\/([a-f0-9]{64})\/image\.jpg$/.exec(req.url);
-    allow = req.url === '/lights' ? 'POST' : req.url === '/current.json' || match ? 'GET' : null;
+    // ?quick=1 names the photo without waiting for Art's picture settings (and so carries no look).
+    quick = req.url === '/current.json?quick=1';
+    allow = req.url === '/lights' ? 'POST' : req.url === '/current.json' || quick || match ? 'GET' : null;
     // CORS preflight carries no key; it only says which method and header the real request may use.
     if (req.method === 'OPTIONS' && allow) {
       res.writeHead(204, { 'Access-Control-Allow-Methods': allow, 'Access-Control-Allow-Headers': 'X-CleanFrame-Key', 'Access-Control-Max-Age': '600' }); res.end(); return;
@@ -524,13 +526,14 @@ function moduleFactory(ctx) {
     pendingHTTP++;
     function release() { if (released) return; released = true; pendingHTTP--; }
     res.once('finish', release); res.once('close', function () { closed = true; release(); });
-    if (req.url === '/current.json') {
-      var lookReady = freshLook();
+    if (req.url === '/current.json' || quick) {
+      // A quick read still starts the settings read, so the full request that follows finds it under way.
+      var lookReady = quick ? (settings(), Promise.resolve()) : freshLook();
       refresh().then(function (meta) { return lookReady.then(function () { return meta; }); }).then(function (meta) {
         var value = look, body;
         if (closed) return;
         body = { revision: meta.revision, contentId: meta.contentId, imageUrl: meta.imageUrl, width: meta.width, height: meta.height };
-        if (value) body.look = value;
+        if (value && !quick) body.look = value;
         res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(body));
       }, function () { if (!closed) { res.writeHead(503, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end('{"error":"Art unavailable"}'); } });
       return;

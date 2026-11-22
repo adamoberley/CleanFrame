@@ -1,7 +1,7 @@
 /* Optional TV-local Art bridge client. Sends only the bridge's own per-install key; no polling, pixel reads or remote-key I/O. */
 (function () {
   'use strict';
-  var MAX = 12 * 1024 * 1024, PORT_KEY = 'cleanframe.art.port', META_KEY = 'cleanframe.art.cache.v1', LOOK_KEY = 'cleanframe.art.look.v1';
+  var MAX = 12 * 1024 * 1024, PORT_KEY = 'cleanframe.art.port', META_KEY = 'cleanframe.art.cache.v1', LOOK_KEY = 'cleanframe.art.look.v1', PREVIEW_KEY = 'cleanframe.art.preview.v2';
   // Owner-calibrated against Art Mode on a 2024 Frame (brightness 5) by matching
   // filmed side-by-sides. Colour temperature −5..+5 blends between the two ends.
   var COOL = { brightness: 0.41, contrast: 0.86, saturate: 0.50, tint: [246, 238, 222], gamma: [1, 1.02, 1.15] };
@@ -67,7 +67,10 @@
     var st = lookStyle(l), el = document.getElementById('artLook'), funcs = ['artCurveR', 'artCurveG', 'artCurveB'];
     if (!el) { el = document.createElement('style'); el.id = 'artLook'; document.head.appendChild(el); }
     // The frosted sheet uses the same look, a touch darker for legible text.
-    el.textContent = '.source-art #photo,.source-art #sheetBg,.source-art #matImg{filter:' + st.filter + '}.source-art #bg::after{content:"";position:absolute;left:0;top:0;right:0;bottom:0;background:' + st.tint + ';mix-blend-mode:multiply;pointer-events:none}' +
+    // A preview is a 480x270 copy stretched to the screen: softened (and scaled past the blur's dark edge) so
+    // it reads as the photo coming into focus rather than as compression blocks.
+    el.textContent = '.source-art #photo,.source-art #sheetBg,.source-art #matImg{filter:' + st.filter + '}' +
+      '.source-art #photo.is-preview{filter:blur(10px) ' + st.filter + ';transform:scale(1.03)}.source-art #bg::after{content:"";position:absolute;left:0;top:0;right:0;bottom:0;background:' + st.tint + ';mix-blend-mode:multiply;pointer-events:none}' +
       '.source-art .sheet-veil{background:' + st.veil + ';mix-blend-mode:multiply}';
     funcs.forEach(function (id, i) { var f = document.getElementById(id); if (f) f.setAttribute('exponent', String(st.gamma[i])); });
   }
@@ -80,12 +83,14 @@
     try { localStorage.setItem(LOOK_KEY, JSON.stringify(next)); } catch (e) { /* Memory-only. */ }
     applyLook(look);
   }
-  // Show last session's small preview of the Art photo at once; the full image replaces it when decoded.
-  (function () {
-    var p = null, photo = typeof document.getElementById === 'function' && document.getElementById('photo');
-    try { p = localStorage.getItem('cleanframe.art.preview.v1'); } catch (e) { p = null; }
-    if (photo && p && /^data:image\/jpeg;base64,[A-Za-z0-9+\/=]{100,200000}$/.test(p) && !photo.getAttribute('src')) photo.src = p;
-  }());
+  // The small preview of a photo, saved with the revision it shows. Home puts it up (softened) only
+  // once it knows that revision is the one it is about to show, so an old photo never flashes up.
+  try { localStorage.removeItem('cleanframe.art.preview.v1'); } catch (e) { /* Untagged preview from older builds. */ }
+  function preview(revision) {
+    var p = null;
+    try { p = JSON.parse(localStorage.getItem(PREVIEW_KEY)); } catch (e) { p = null; }
+    return p && p.revision === revision && /^[a-f0-9]{64}$/.test(revision || '') && typeof p.src === 'string' && /^data:image\/jpeg;base64,[A-Za-z0-9+\/=]{100,200000}$/.test(p.src) ? p.src : null;
+  }
   try { look = JSON.parse(localStorage.getItem(LOOK_KEY)); } catch (e) { look = null; }
   if (!validLook(look)) look = null;
   applyLook(look);
@@ -246,21 +251,33 @@
       } catch (e) { done(record(m, url)); }
     } else done(record(m, url)); // Memory-only when private storage is unavailable.
   }
-  function refresh(done) {
+  // Two reads run side by side with the saved copy's load: ?quick=1 names the current photo at once,
+  // and the full read also carries Art's picture settings (up to 800 ms on the TV), applied when it lands.
+  // The photo is decided from the first answer, so a new photo never waits for the settings.
+  // known(m), when given, hears that answer before the saved copy has finished loading.
+  function refresh(done, known) {
     if (refreshing || document.hidden) { done(null); return; }
-    refreshing = true; var g = epoch, base = 'http://' + host() + ':' + port();
+    refreshing = true; var g = epoch, base = 'http://' + host() + ':' + port(), meta = null, failed = 0, cacheRead = false, decided = false;
     function finish(value) {
       if (g !== epoch) return;
       refreshing = false; error = value ? null : 'Art Mode is unavailable. Your last wallpaper is kept.';
       if (value) current = value;
       done(value);
     }
-    load(function () {
+    function heard(m) {
       if (g !== epoch) return;
-      request(base + '/current.json', false, function (m) {
-        if (g !== epoch) return;
+      if (!metadata(m)) failed++;
+      else if (!meta) { meta = m; if (known) known(m); }
+      both();
+    }
+    request(base + '/current.json?quick=1', false, heard);
+    request(base + '/current.json', false, function (m) { if (g === epoch && metadata(m) && m.look) setLook(m.look); heard(m); });
+    load(function () { if (g !== epoch) return; cacheRead = true; both(); });
+    function both() {
+      if (decided || !cacheRead || !meta && failed < 2) return;
+      decided = true;
+      (function (m) {
         if (!metadata(m)) { finish(null); return; }
-        if (m.look) setLook(m.look);
         if (current && current.revision === m.revision) { finish(current); return; }
         request(base + m.imageUrl, true, function (bytes) {
           if (g !== epoch) return;
@@ -278,11 +295,12 @@
             finish(record(m, url));
           });
         });
-      });
-    });
+      }(meta));
+    }
   }
   function cancel() { epoch++; refreshing = false; requests.slice().forEach(function (xhr) { xhr.abort(); }); }
-  window.FrameArt = { load: load, refresh: refresh, cancel: cancel, current: function () { return current; },
+  window.FrameArt = { load: load, refresh: refresh, cancel: cancel, current: function () { return current; }, preview: preview,
+    savePreview: function (revision, src) { try { localStorage.setItem(PREVIEW_KEY, JSON.stringify({ revision: revision, src: src })); } catch (e) { /* Preview is optional. */ } },
     status: function () { return { available: !!current, refreshing: refreshing, error: error }; },
     lookFor: lookStyle,
     bridge: function () { return 'http://' + host() + ':' + port(); }, authorize: authorize,
