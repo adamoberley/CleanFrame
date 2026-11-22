@@ -42,8 +42,8 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000}
 .utils{position:absolute;right:72px;top:40px;display:flex;align-items:center}
 .u{height:64px;padding:0 26px 0 20px;border-radius:32px;display:inline-flex;align-items:center;font-size:30px;font-weight:500;letter-spacing:-.3px;white-space:nowrap;color:var(--mute);background:none;text-shadow:0 1px 2px rgba(0,0,0,.32);transition:background-color 140ms linear,color 140ms linear}
 .u .ico{width:32px;height:32px}
-.l-dock .u,.l-list .u{max-width:600px}
-.l-dock .u-label,.l-list .u-label{overflow:hidden;text-overflow:ellipsis}
+.l-list .u{max-width:600px}
+.l-list .u-label{overflow:hidden;text-overflow:ellipsis}
 .u.is-focus{background:var(--solid);color:var(--solid-ink);text-shadow:none}
 
 /* The rightmost icon box ends at 1780; SVG paths retain their native optical padding.
@@ -61,45 +61,12 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000}
 .util-focus-label{position:absolute;z-index:3;left:0;top:108px;height:36px;font-size:28px;line-height:36px;font-weight:500;letter-spacing:-.2px;color:#f6f1e7;text-align:center;white-space:nowrap;opacity:0;text-shadow:0 1px 2px rgba(14,10,6,.40),0 2px 8px rgba(14,10,6,.24);pointer-events:none;transition:opacity 120ms linear}
 .util-focus-label.is-on{opacity:1}
 
-/* ---------- Glass Dock ---------- */
-.dock{position:absolute;left:208px;top:676px;width:1504px;height:232px}
-.mat{position:absolute;left:0;top:0;right:0;bottom:0;border-radius:48px;overflow:hidden;transform:translateZ(0)}
-.mat-img{position:absolute;left:0;top:0;width:1920px;height:1080px;max-width:none;object-fit:cover;object-position:50% 50%}
-.mat-veil{position:absolute;left:0;top:0;right:0;bottom:0;background:rgba(8,14,18,.16)}
-/* One edge: a top hairline that follows the radius. No lower highlight, no outer shadow. */
-.mat::after{content:"";position:absolute;left:0;top:0;right:0;bottom:0;border-radius:48px;box-shadow:inset 0 1px 0 rgba(255,255,255,.24);pointer-events:none}
-.shelf{position:absolute;left:16px;top:0;bottom:0;width:1472px;overflow:hidden}
-.shelf.fade-r{-webkit-mask-image:linear-gradient(to right,#000 calc(100% - 132px),rgba(0,0,0,.2));mask-image:linear-gradient(to right,#000 calc(100% - 132px),rgba(0,0,0,.2))}
-.shelf.fade-l{-webkit-mask-image:linear-gradient(to left,#000 calc(100% - 132px),rgba(0,0,0,.2));mask-image:linear-gradient(to left,#000 calc(100% - 132px),rgba(0,0,0,.2))}
-.shelf.fade-l.fade-r{-webkit-mask-image:linear-gradient(to right,rgba(0,0,0,.2),#000 132px,#000 calc(100% - 132px),rgba(0,0,0,.2));mask-image:linear-gradient(to right,rgba(0,0,0,.2),#000 132px,#000 calc(100% - 132px),rgba(0,0,0,.2))}
-.track{position:absolute;left:0;top:0;height:232px;transition:transform var(--t) var(--ease);will-change:transform}
-.plate{position:absolute;left:0;top:16px;width:288px;height:200px;border-radius:32px;opacity:0;transition:transform var(--t) var(--ease),opacity 120ms linear;will-change:transform}
-.plate.on-focus{opacity:1;background:var(--plate);box-shadow:var(--plate-edge)}
-.plate.on-sel{opacity:1;background:rgba(255,255,255,.11)}
-.tile{position:absolute;left:0;top:16px;width:288px;height:200px;border-radius:32px;transition:transform var(--t) var(--ease)}
-.tile.is-outside-icon{opacity:0;pointer-events:none}
 .mark{position:relative;display:block;flex:none}
 .mark img,.mark .mk{position:absolute;max-width:none}.mark .mk{display:block;background:currentColor;-webkit-mask-size:100% 100%;mask-size:100% 100%;-webkit-mask-repeat:no-repeat;mask-repeat:no-repeat}.mark.is-bad>*{visibility:hidden}
 .monogram{display:flex;align-items:center;justify-content:center;font-weight:600;letter-spacing:0;color:inherit}
 .monogram span{position:relative;width:1.65em;height:1.65em;display:flex;align-items:center;justify-content:center;border-radius:.4em}.monogram span::after{content:"";position:absolute;top:0;right:0;bottom:0;left:0;border:2px solid currentColor;border-radius:inherit;opacity:.38}
 .native-icon img{position:absolute;top:0;right:0;bottom:0;left:0;width:100%;height:100%;object-fit:contain}
 .native-icon.has-native-icon>span{visibility:hidden}
-.tile .mark{position:absolute;left:84px;top:34px;opacity:.84;transition:opacity 160ms linear,transform var(--t) var(--ease)}
-.tile .label{position:absolute;left:4px;right:4px;top:128px;text-align:center;font-size:36px;line-height:44px;letter-spacing:-.8px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;opacity:.84;transition:opacity 160ms linear}
-.tile.is-focus .mark,.tile.is-focus .label{opacity:1}
-.tile.is-focus .mark{transform:translateY(-3px) scale(1.04)}
-.tile.is-sel .mark,.tile.is-sel .label{opacity:.94}
-.tile.is-focus .add{opacity:1}
-.tile.is-press .mark{animation:press 300ms var(--ease)}
-@keyframes press{0%{transform:translateY(-3px) scale(1.04)}40%{transform:translateY(0) scale(.94)}100%{transform:translateY(-3px) scale(1.04)}}
-.dock.is-empty .shelf{display:none}
-.dock-empty{position:absolute;left:0;top:0;right:0;bottom:0;display:none;flex-direction:column;align-items:center;justify-content:center}
-.dock.is-empty .dock-empty{display:flex}
-.dock-empty p{font-size:36px;font-weight:500;letter-spacing:-.6px}
-.cue{position:absolute;top:768px;left:0;width:48px;height:48px;border-radius:24px;background:rgba(8,14,18,.28);color:#fff;display:flex;align-items:center;justify-content:center;opacity:0;transition:opacity 160ms linear;pointer-events:none}
-.cue.is-on{opacity:.8}
-.cue .ico{width:30px;height:30px;stroke-width:2}
-.l-list .dock,.l-list .cue{display:none}
 
 /* Shared whole-row cues for the app library and two-column editor. */
 .row-cue{position:absolute;width:40px;height:40px;display:none;align-items:center;justify-content:center;color:var(--mute);pointer-events:none}
@@ -251,7 +218,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000}
 
 @media (prefers-reduced-motion:reduce){
   .stage,.stage *{transition:none!important;animation:none!important}
-  .tile .mark,.tile .label,.gt .mark{transform:none!important;animation:none!important}
+  .gt .mark{transform:none!important;animation:none!important}
   .l-list .ph-row,.l-list .ph-group,.l-list .ph-rows,.l-list .ph-plate,.quiet-utils .u,.util-focus-label{transition:opacity 120ms linear!important}
   .quiet-utils .u .ico{transform:none!important}
 }
@@ -279,16 +246,6 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000}
 .quiet-utils.is-both .u[data-action="util.settings"]{padding-right:15px}
 .l-list .quiet-utils.is-both .u{font-size:28px}
 .l-list .util-focus-label{text-align:right}
-.tile-content{position:absolute;top:0;right:0;bottom:0;left:0;border-radius:inherit;transform-origin:50% 50%;transition:opacity 160ms linear,transform var(--t) var(--ease)}
-.f-type .plate{opacity:0}
-.f-type .tile-content{opacity:.62}
-.f-type .tile.is-focus .tile-content{opacity:1;transform:scale(1.06)}
-.f-type .tile.is-sel .tile-content{opacity:.78}
-.f-type .tile .mark,.f-type .tile .label{opacity:1;transform:none}
-.f-type .tile.is-press .mark{animation:none}
-.bg-photo.f-type .tile-content{opacity:.84}
-.bg-photo.f-type .tile.is-sel .tile-content{opacity:.92}
-.bg-photo.f-type .tile.is-focus .tile-content,.bg-photo.f-type .tile.is-lifted .tile-content{opacity:1}
 /* Region classes are an offline classification, never runtime pixel sampling. */
 .bg-photo{--tr-rest:.66;--br-rest:.66;--tr-peer:.46;--br-peer:.46}
 .bg-photo.l-list .caption{color:var(--tr-ink)}
@@ -318,10 +275,10 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000}
 .is-horizontal .setting-choice{flex:1;min-width:0;min-height:92px;padding:12px 20px;font-size:36px}
 .is-horizontal .setting-tick{width:26px;margin-left:0}
 .is-horizontal .setting-tick .ico{width:26px;height:26px}
-/* Visual holds six rows of choices; keep them compact enough to fit the stage. */
-.detail-layout .setting-section+.setting-section{margin-top:20px}
-.detail-layout.appearance .appearance-rows{top:216px}
-.detail-layout .is-horizontal .setting-choice{min-height:68px;padding:8px 18px;font-size:32px;line-height:40px}
+/* Visual holds five rows of choices; keep them compact enough to fit the stage. */
+.detail-visual .setting-section+.setting-section{margin-top:20px}
+.detail-visual.appearance .appearance-rows{top:216px}
+.detail-visual .is-horizontal .setting-choice{min-height:68px;padding:8px 18px;font-size:32px;line-height:40px}
 .setting-choice.setting-back{min-height:52px;width:auto;padding:8px 16px;border-radius:16px;font-size:28px;line-height:36px;letter-spacing:-.2px;color:var(--mute)}
 .setting-back .ico{width:24px;height:24px}
 .setting-choice.setting-back.is-focus{color:var(--solid-ink)}
@@ -331,9 +288,8 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000}
 .setting-choice:focus-visible,.settings-group:focus-visible{outline:2px solid currentColor;outline-offset:3px}
 .is-rapid .ph-plate{transform:translateZ(0) scale(1);transition:none}
 .is-rapid .ph-group{transition:opacity 90ms linear,transform 110ms var(--ease)}
-@media(prefers-reduced-motion:reduce){.panel-content,.ph-group,.tile-content,.u-content,.util-focus-label,.quiet-utils .u .ico{transform:none!important}.tile-content{transition:opacity 120ms linear!important}}
+@media(prefers-reduced-motion:reduce){.panel-content,.ph-group,.u-content,.util-focus-label,.quiet-utils .u .ico{transform:none!important}}
 
-.at-appearance .plate.on-sel{opacity:.5;background:var(--plate);box-shadow:var(--plate-edge)}
 
 /* Header buttons share Type/Glass focus. */
 .s-head .btn{position:relative;background:none;color:var(--mute);box-shadow:none;transition:transform 140ms var(--ease),color 140ms linear}
@@ -347,16 +303,10 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000}
 
 /* Saved display choices alter content, not app identity or editing state. */
 .stage.is-reflow *{transition:none!important;animation:none!important}
-.dock .tile,.dock .plate{width:var(--tile-w);height:var(--tile-h)}
-.dock .track{height:var(--dock-h)}
-.a-text .tile .label{left:12px;right:12px;top:28px;font-size:40px;line-height:48px;font-weight:600}
-.a-text .label-ink{display:inline-block;max-width:100%;overflow:hidden;text-overflow:ellipsis;vertical-align:top}
-.a-icons .tile .mark{left:20px;top:28px}
 .a-text .ph-name{left:28px}
 .a-icons .ph-group .mark{top:20px}
 .app-focus-name{position:absolute;z-index:3;font-size:40px;line-height:48px;font-weight:500;letter-spacing:-.6px;color:var(--ink);text-shadow:0 1px 2px rgba(14,10,6,.32),0 3px 14px rgba(14,10,6,.24);opacity:0;pointer-events:none;transition:opacity 120ms linear}
 .app-focus-name.is-on{opacity:1}
-.l-dock .app-focus-name{font-size:36px;line-height:44px;text-align:center}
 .quiet-utils.is-text{right:86px}
 .quiet-utils.is-text .u-content .ico{display:none}
 .quiet-utils.is-text .u{padding:0 14px}
@@ -371,7 +321,6 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000}
 .utils>*+*{margin-left:8px}
 .quiet-utils>*+*{margin-left:20px}
 .quiet-utils.is-icons>*+*{margin-left:16px}
-.dock-empty>*+*{margin-top:20px}
 .s-head>*+*{margin-left:12px}
 .btn>*+*{margin-left:12px}
 .gt .state>*+*{margin-left:8px}
@@ -405,14 +354,9 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000}
 .art-curve{position:absolute;left:0;top:0;width:0;height:0;overflow:hidden}
 .source-art .home{--ink:#f4f4f1;--ph-ink:#f4f4f1;color:#f4f4f1}
 .source-art .clock,.source-art .ph-name,.source-art .quiet-utils .u,.source-art .util-focus-label{text-shadow:-1px 0 #111,1px 0 #111,0 -1px #111,0 1px #111,0 2px 8px rgba(0,0,0,.65)}
-.source-art .mat{background:rgba(24,32,38,.5)}
-.source-art .mat-img.is-frost{visibility:visible}
-.source-art .mat .mat-veil{visibility:visible;background:rgba(255,255,255,.08)}
-.source-art .mat-img{visibility:hidden}
 /* Frosted focus on Art: a translucent light pane over the original photo.
    Static gradients only; no backdrop blur or pixel sampling on the TV. */
 .source-art .ph-plate{background:linear-gradient(170deg,rgba(255,255,255,.30),rgba(255,255,255,.14) 58%,rgba(255,255,255,.18));box-shadow:0 10px 30px rgba(0,0,0,.16)}
-.source-art .dock .plate.on-focus{background:linear-gradient(170deg,rgba(255,255,255,.30),rgba(255,255,255,.14) 58%,rgba(255,255,255,.18));box-shadow:inset 0 1px 0 rgba(255,255,255,.50),inset 0 0 0 1px rgba(255,255,255,.20)}
 .source-art.f-glass .ph-row.is-focus .ph-name{text-shadow:-1px 0 #111,1px 0 #111,0 -1px #111,0 1px #111,0 2px 8px rgba(0,0,0,.65)}
 .source-art .sheet-bg{visibility:hidden}
 .source-art .sheet-bg.is-frost{visibility:visible}

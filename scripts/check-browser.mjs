@@ -201,7 +201,7 @@ async function noLiveFilters() {
   return current.evaluate(() => [...document.querySelectorAll('#stage, #stage *')].filter(e => e.getClientRects().length).map(e => {
     const s = getComputedStyle(e);
     // The Art photo and its frosted sheet copy may carry a static colour curve (#artCurve: feComponentTransfer only); nothing else may reference an SVG filter.
-    const curve = document.getElementById('artCurve'), colourOnly = (e.id === 'photo' || e.id === 'sheetBg' || e.id === 'matImg') && curve && curve.querySelectorAll('*').length === [...curve.querySelectorAll('feComponentTransfer, feFuncR, feFuncG, feFuncB')].length;
+    const curve = document.getElementById('artCurve'), colourOnly = (e.id === 'photo' || e.id === 'sheetBg') && curve && curve.querySelectorAll('*').length === [...curve.querySelectorAll('feComponentTransfer, feFuncR, feFuncG, feFuncB')].length;
     const filter = colourOnly ? s.filter.replace(/url\("?#artCurve"?\)/, '') : s.filter;
     return { tag: e.tagName, cls: e.className, filter, backdrop: s.backdropFilter || s.webkitBackdropFilter || 'none' };
   }).filter(s => /blur|url\(/.test(s.filter) || s.backdrop !== 'none'));
@@ -215,7 +215,7 @@ try {
       const s = await state();
       check(theme + ' preserves order and last app', same(s.dock, ['youtube', 'netflix']) && s.lastApp === 'youtube', s);
       check(theme + ' drops retired wallpaper and rotation fields', !['wallpaper', 'mode', 'wall', 'material', 'font'].some(k => k in s || k in s.look), s);
-      check(theme + ' maps to intended two-layout appearance on Art Mode', s.look.layout === (theme === 'list' ? 'list' : 'dock') && s.look.bg === 'photo', s.look);
+      check(theme + ' loads as the List layout on Art Mode', s.look.layout === 'list' && s.look.bg === 'photo', s.look);
       await closePage();
     }
     for (const bg of ['dark', 'light']) {
@@ -227,6 +227,14 @@ try {
       check('Next write stores the migrated ' + bg + ' background as Art Mode', (await stored()).look?.bg === 'photo' || (await stored()).bg === 'photo', await stored());
       await closePage();
     }
+    // Dock was retired: a saved Dock choice loads as List, keeps every other setting and is rewritten as List.
+    await page({ seed: baseline({ dock: ['youtube', 'netflix'], lastApp: 'netflix', recent: ['espn'], look: { layout: 'dock', focus: 'type', apps: 'icons', controls: 'text', inputs: 'always', clock: 'off' } }) });
+    const docked = await state(), dockedStored = await stored();
+    check('Stored Dock layout loads as List and keeps the other settings', docked.look.layout === 'list' && docked.look.focus === 'type' && docked.look.apps === 'icons' && docked.look.controls === 'text'
+      && docked.look.inputs === 'always' && docked.look.clock === 'off' && same(docked.dock, ['youtube', 'netflix']) && docked.lastApp === 'netflix' && same(docked.recent, ['espn'])
+      && dockedStored.look.layout === 'list' && dockedStored.look.focus === 'type' && same(dockedStored.dock, ['youtube', 'netflix'])
+      && await current.evaluate(() => document.getElementById('stage').classList.contains('l-list') && document.querySelectorAll('.ph-row').length === 2 && ShoreQA.where().focusCount === 1), { docked, dockedStored });
+    await closePage();
     await page({ seed: baseline({ dock: ['XtU8fQk2gN.ESPN', 'netflix', 'XtU8fQk2gN.ESPN'], recent: ['XtU8fQk2gN.ESPN'], lastApp: 'netflix',
       appRecords: [{ id: 'XtU8fQk2gN.ESPN', appId: 'XtU8fQk2gN.ESPN', name: 'ESPN' }] }) });
     check('Built-in app saved under its Tizen ID maps to the built-in entry once', same((await state()).dock, ['espn', 'netflix']), (await state()).dock);
@@ -251,7 +259,7 @@ try {
     await closePage();
     await page({ seed: { dock: [], wallpaper: 'missing', mode: 'constructor', theme: 'constructor', look: { layout: 'grid', focus: 'blur', clock: 7 } } });
     const s = await state();
-    check('Invalid values recover usable bounded Home', s.dock.length >= 1 && s.dock.length <= 9 && s.look.source === 'art' && s.look.layout === 'dock' && s.look.focus === 'glass' && s.look.clock === 'time', s);
+    check('Invalid values recover usable bounded Home', s.dock.length >= 1 && s.dock.length <= 9 && s.look.source === 'art' && s.look.layout === 'list' && s.look.focus === 'glass' && s.look.clock === 'time', s);
     await closePage();
     await page({ seed: baseline({ dock: [EXTRA, 'netflix'], lastApp: EXTRA }), catalogFailure: true });
     await library();
@@ -264,7 +272,7 @@ try {
   await run('Hidden boot installs a complete wallpaper without animation frames', async () => {
     await page({ initiallyHidden: true, pauseHiddenFrames: true, rejectDecode: true });
     const before = await stored();
-    check('Hidden startup settles with every background image loaded', await current.evaluate(() => document.hidden && ['photo', 'matImg', 'sheetBg'].every(id => {
+    check('Hidden startup settles with every background image loaded', await current.evaluate(() => document.hidden && ['photo', 'sheetBg'].every(id => {
       const image = document.getElementById(id); return image.complete && image.naturalWidth > 0;
     })));
     await current.evaluate(() => window.__setHidden(false)); await ready();
@@ -273,58 +281,56 @@ try {
     await page({ rejectDecode: true });
     check('A valid loaded image survives a visible decode rejection', !!(await state()).shown.artRevision && !(await state()).pending);
   });
-  await run('Layouts keep their geometry at both target viewports', async () => {
+  await run('List keeps its geometry at both target viewports', async () => {
     await page();
     for (const viewport of [{ width: 1920, height: 1080 }, { width: 1280, height: 720 }]) {
       await current.setViewportSize(viewport);
-      for (const layout of ['dock', 'list']) {
-        await look({ layout, focus: 'glass' }); await scene('home');
-        const labels = await current.locator(layout === 'dock' ? '.tile-content' : '.ph-name').evaluateAll(elements => elements.filter(e => e.getClientRects().length).map(e => e.getBoundingClientRect().width));
-        check(layout + ' labels retain width at ' + viewport.width, labels.length > 0 && labels.every(width => width > 0), labels);
-        await nav(layout === 'dock' ? 'up' : 'right');
-        await current.waitForTimeout(240);
-        check('Utility focus and rounded lens align at ' + viewport.width + ' in ' + layout, await current.evaluate(() => {
-          const button = document.querySelector('.u.is-focus'), lens = document.querySelector('.ut-lens.is-current');
-          if (ShoreQA.where().focusCount !== 1 || !button || !lens) return false;
-          const b = button.getBoundingClientRect(), l = lens.getBoundingClientRect();
-          return Math.abs(b.top - l.top) < 4;
-        }));
-        await current.screenshot({ path: out + 'compat-' + layout + '-' + viewport.width + '.png' });
-        await group('layout');
-        check('Appearance keeps full stage bounds at ' + viewport.width + ' in ' + layout, await current.locator('.appearance').evaluate(e => {
-          const r = e.getBoundingClientRect(), stage = document.getElementById('stage').getBoundingClientRect();
-          return Math.abs(r.width - stage.width) < 1 && Math.abs(r.height - stage.height) < 1;
-        }));
-        await library();
-        check('All apps content keeps its width at ' + viewport.width + ' in ' + layout, await current.locator('.gt .panel-content').evaluateAll(elements => elements.length > 0 && elements.every(e => e.getBoundingClientRect().width > 0)));
-      }
+      await look({ focus: 'glass' }); await scene('home');
+      const labels = await current.locator('.ph-name').evaluateAll(elements => elements.filter(e => e.getClientRects().length).map(e => e.getBoundingClientRect().width));
+      check('List labels retain width at ' + viewport.width, labels.length > 0 && labels.every(width => width > 0), labels);
+      await nav('right');
+      await current.waitForTimeout(240);
+      check('Utility focus and rounded lens align at ' + viewport.width, await current.evaluate(() => {
+        const button = document.querySelector('.u.is-focus'), lens = document.querySelector('.ut-lens.is-current');
+        if (ShoreQA.where().focusCount !== 1 || !button || !lens) return false;
+        const b = button.getBoundingClientRect(), l = lens.getBoundingClientRect();
+        return Math.abs(b.top - l.top) < 4;
+      }));
+      await current.screenshot({ path: out + 'compat-list-' + viewport.width + '.png' });
+      await group('visual');
+      check('Appearance keeps full stage bounds at ' + viewport.width, await current.locator('.appearance').evaluate(e => {
+        const r = e.getBoundingClientRect(), stage = document.getElementById('stage').getBoundingClientRect();
+        return Math.abs(r.width - stage.width) < 1 && Math.abs(r.height - stage.height) < 1;
+      }));
+      await library();
+      check('All apps content keeps its width at ' + viewport.width, await current.locator('.gt .panel-content').evaluateAll(elements => elements.length > 0 && elements.every(e => e.getBoundingClientRect().width > 0)));
     }
   });
   await run('Utility control geometry', async () => {
     await page();
     for (const width of [1920, 1280]) {
       await current.setViewportSize({ width, height: width * 9 / 16 });
-      for (const layout of ['dock', 'list']) for (const controls of ['icons', 'both', 'text']) {
-        await look({ layout, controls, focus: 'glass' }); await scene('home');
+      for (const controls of ['icons', 'both', 'text']) {
+        await look({ controls, focus: 'glass' }); await scene('home');
         if ((await call('where')).zone === 'util') await nav('back');
-        await nav(layout === 'dock' ? 'up' : 'right');
-        await nav(...Array(2).fill(layout === 'dock' ? 'left' : 'up'));
+        await nav('right');
+        await nav('up', 'up');
         await current.waitForTimeout(180);
-        const spacing = await current.evaluate(({ layout, controls }) => {
+        const spacing = await current.evaluate(controls => {
           const scale = document.getElementById('stage').getBoundingClientRect().width / 1920;
           return [...document.querySelectorAll('#utils .u')].map(button => {
             const content = button.querySelector('.u-content');
             const children = [...content.children].filter(e => getComputedStyle(e).display !== 'none');
             const visibleWidth = children.reduce((sum, e) => sum + e.getBoundingClientRect().width / scale, 0);
-            const gap = controls !== 'both' ? 0 : layout === 'dock' ? 10 : button.dataset.action === 'util.settings' ? 18.9 : 17.9;
+            const gap = controls !== 'both' ? 0 : button.dataset.action === 'util.settings' ? 18.9 : 17.9;
             return { action: button.dataset.action, children: children.length, extraWidth: content.getBoundingClientRect().width / scale - visibleWidth, gap };
           });
-        }, { layout, controls });
-        check(layout + '/' + controls + ' uses spacing between visible children at ' + width,
+        }, controls);
+        check(controls + ' uses spacing between visible children at ' + width,
           spacing.length === 2 && spacing.every(s => s.children === (controls === 'both' ? 2 : 1) && Math.abs(s.extraWidth - s.gap) < .5), spacing);
         const focused = [];
         for (let i = 0; i < 2; i++) {
-          if (i) await nav(layout === 'dock' ? 'right' : 'down');
+          if (i) await nav('down');
           // The lens springs in from 94%; measure its settled geometry.
           await current.waitForFunction(() => document.getAnimations().every(a => a.playState !== 'running'));
           focused.push(await current.evaluate(() => {
@@ -333,11 +339,11 @@ try {
             const bounds = lens.getBoundingClientRect();
             const content = [...button.querySelector('.u-content').children].filter(e => getComputedStyle(e).display !== 'none');
             const caption = document.querySelector('.util-focus-label.is-on');
-            if (caption && ShoreQA.state().look.layout === 'list') content.push(caption);
+            if (caption) content.push(caption);
             return content.every(e => { const r = e.getBoundingClientRect(); return r.left >= bounds.left - 1 && r.right <= bounds.right + 1 && r.top >= bounds.top - 1 && r.bottom <= bounds.bottom + 1; });
           }));
         }
-        check(layout + '/' + controls + ' keeps each focused control inside its lens at ' + width, focused.every(Boolean), focused);
+        check(controls + ' keeps each focused control inside its lens at ' + width, focused.every(Boolean), focused);
       }
     }
   });
@@ -345,7 +351,7 @@ try {
     await page();
     for (const width of [1920, 1280]) {
       await current.setViewportSize({ width, height: width * 9 / 16 });
-      await look({ layout: 'dock', focus: 'glass' }); await editor();
+      await look({ focus: 'glass' }); await editor();
       const divider = await current.locator('.ed-order-break.is-on').evaluate(e => {
         const scale = document.getElementById('stage').getBoundingClientRect().width / 1920;
         const text = document.createRange(); text.selectNodeContents(e);
@@ -372,33 +378,33 @@ try {
     }
   });
   await run('Inputs on Home shows HDMI entries by connection or always', async () => {
-    const dock = ['netflix', 'hdmi1', 'hdmi2', 'youtube'];
+    const homeIds = ['netflix', 'hdmi1', 'hdmi2', 'youtube'];
     // Rendered rows are reused, so read HDMI entries in on-screen order rather than DOM order.
     const shownHdmi = async () => (await current.waitForFunction(() => document.getAnimations().every(a => a.playState !== 'running')), current.evaluate(() => [...document.querySelectorAll('[data-action^="home.app.hdmi"]')].filter(e => e.getClientRects().length)
       .map(e => ({ id: e.getAttribute('data-action').slice(9), r: e.getBoundingClientRect() })).sort((a, b) => a.r.top - b.r.top || a.r.left - b.r.left).map(e => e.id)));
-    await page({ seed: baseline({ dock, lastApp: 'netflix' }) });
+    await page({ seed: baseline({ dock: homeIds, lastApp: 'netflix' }) });
     await current.waitForFunction(() => ShoreQA.state().inputPorts[2] === true);
     check('Inputs on Home defaults to When connected', (await state()).look.inputs === 'connected');
-    for (const width of [1920, 1280]) for (const layout of ['dock', 'list']) {
-      await current.setViewportSize({ width, height: width * 9 / 16 }); await look({ layout }); await scene('home');
-      check('Disconnected HDMI 1 is hidden and connected HDMI 2 shown ' + layout + '/' + width,
+    for (const width of [1920, 1280]) {
+      await current.setViewportSize({ width, height: width * 9 / 16 }); await scene('home');
+      check('Disconnected HDMI 1 is hidden and connected HDMI 2 shown at ' + width,
         same((await state()).visibleHome, ['netflix', 'hdmi2', 'youtube']) && same(await shownHdmi(), ['hdmi2']) && (await call('where')).focusCount === 1, { visible: (await state()).visibleHome, shown: await shownHdmi() });
     }
     await current.setViewportSize({ width: 1920, height: 1080 });
     await current.evaluate(() => { __tv.videoSources = { connected: [{ type: 'HDMI', number: 1 }, { type: 'HDMI', number: 2 }, { type: 'TV', number: 0 }], disconnected: [{ type: 'HDMI', number: 3 }] }; __tv.emitSources(); });
     await current.waitForFunction(() => ShoreQA.state().visibleHome.includes('hdmi1'));
-    check('A newly connected HDMI input appears on Home', same((await state()).visibleHome, dock) && same(await shownHdmi(), ['hdmi1', 'hdmi2']));
+    check('A newly connected HDMI input appears on Home', same((await state()).visibleHome, homeIds) && same(await shownHdmi(), ['hdmi1', 'hdmi2']));
     await current.evaluate(() => { __tv.videoSources = { connected: [{ type: 'HDMI', number: 2 }, { type: 'TV', number: 0 }], disconnected: [{ type: 'HDMI', number: 1 }, { type: 'HDMI', number: 3 }] }; __tv.emitSources(); });
     await current.waitForFunction(() => !ShoreQA.state().visibleHome.includes('hdmi1'));
     check('A disconnected HDMI input leaves Home again', same(await shownHdmi(), ['hdmi2']));
-    await group('layout'); const before = await settingsSnapshot();
+    await group('visual'); const before = await settingsSnapshot();
     await choice('inputs', 'always'); await ready();
     check('Visual Inputs on Home applies Always once', (await state()).look.inputs === 'always' && (await stored()).look.inputs === 'always' && (await state()).writes === before.writes + 1
       && (await radios()).some(r => r.action === 'choice.inputs.always' && r.checked === 'true' && r.text === 'Always'));
     await scene('home');
-    check('Always shows disconnected HDMI 1 on Home', same((await state()).visibleHome, dock) && same(await shownHdmi(), ['hdmi1', 'hdmi2']));
+    check('Always shows disconnected HDMI 1 on Home', same((await state()).visibleHome, homeIds) && same(await shownHdmi(), ['hdmi1', 'hdmi2']));
     await current.reload(); await ready();
-    check('Always survives reload', (await state()).look.inputs === 'always' && same((await state()).visibleHome, dock));
+    check('Always survives reload', (await state()).look.inputs === 'always' && same((await state()).visibleHome, homeIds));
     await current.evaluate(() => { __tv.calls = []; });
     await act('home.app.hdmi1'); await current.waitForFunction(() => __tv.calls.some(c => c.id === 'org.tizen.tv-viewer'));
     check('Sleeping HDMI 1 selects its exact port before viewer handoff', await current.evaluate(() => __tv.calls[0].method === 'setSource' && __tv.calls[0].type === 'HDMI' && __tv.calls[0].number === 1 && __tv.calls[1].id === 'org.tizen.tv-viewer'));
@@ -406,7 +412,7 @@ try {
     await act('home.app.hdmi2'); await current.waitForFunction(() => ShoreQA.state().view === 'message');
     check('Failed input selection displays an error and keeps viewer closed', /could not|try again/i.test(await current.locator('#stage').innerText()) && await current.evaluate(() => __tv.calls.length === 1));
     await nav('back');
-    await group('layout'); await choice('inputs', 'connected'); await ready(); await scene('home');
+    await group('visual'); await choice('inputs', 'connected'); await ready(); await scene('home');
     await current.waitForFunction(() => !ShoreQA.state().visibleHome.includes('hdmi1'));
     check('Returning to When connected hides disconnected HDMI 1 again', same(await shownHdmi(), ['hdmi2']) && (await stored()).look.inputs === 'connected');
     await closePage();
@@ -416,10 +422,10 @@ try {
     const drawn = await current.evaluate(() => ShoreQA.where().focusAction);
     await current.evaluate(() => { __tv.calls = []; }); await nav('ok'); await current.waitForFunction(() => __tv.calls.length > 0);
     check('OK before inputs are reported opens the app drawn focused', drawn === 'home.app.netflix' && await current.evaluate(() => !__tv.calls.some(c => c.method === 'setSource') && __tv.calls.some(c => /netflix/i.test(c.id || ''))), { drawn, calls: await current.evaluate(() => __tv.calls) });
-    await closePage(); await page({ inputUnavailable: true, seed: baseline({ dock, lastApp: 'netflix' }) });
+    await closePage(); await page({ inputUnavailable: true, seed: baseline({ dock: homeIds, lastApp: 'netflix' }) });
     check('Unavailable source API never invents connected HDMI entries', same((await state()).visibleHome, ['netflix', 'youtube']) && (await call('where')).focusCount === 1);
     await look({ inputs: 'always' });
-    check('Always shows HDMI entries without source discovery', same((await state()).visibleHome, dock));
+    check('Always shows HDMI entries without source discovery', same((await state()).visibleHome, homeIds));
   });
   await run('Home Live TV and ESPN native actions', async () => {
     await page({ seed: baseline({ dock: ['livetv', 'espn'], lastApp: 'livetv' }) });
@@ -536,14 +542,14 @@ try {
     await current.evaluate(() => { window.__failWrites = false; }); await nav('ok');
     check('Retry commits through same action', !(await stored()).dock.includes('netflix'));
     await scene('home'); const old = await state(), oldStored = await stored(), oldClasses = (await settingsSnapshot()).rendered;
-    await current.evaluate(() => { window.__failWrites = true; }); await call('look', { layout: old.look.layout === 'list' ? 'dock' : 'list', inputs: old.look.inputs === 'always' ? 'connected' : 'always' });
+    await current.evaluate(() => { window.__failWrites = true; }); await call('look', { focus: old.look.focus === 'glass' ? 'type' : 'glass', inputs: old.look.inputs === 'always' ? 'connected' : 'always' });
     await current.waitForFunction(() => !ShoreQA.state().pending);
-    check('Failed appearance write keeps display and preferences', (await state()).look.layout === old.look.layout && (await state()).look.inputs === old.look.inputs && same((await settingsSnapshot()).rendered, oldClasses) && same(await stored(), oldStored));
+    check('Failed appearance write keeps display and preferences', (await state()).look.focus === old.look.focus && (await state()).look.inputs === old.look.inputs && same((await settingsSnapshot()).rendered, oldClasses) && same(await stored(), oldStored));
   });
   await run('Retired appearance values, system font and scaling', async () => {
     await page();
-    await look({ layout: 'dock', focus: 'glass', apps: 'both', controls: 'icons' });
-    check('Home names use the TV system font (One UI Sans)', await current.evaluate(() => /^"?One UI Sans APP"?,/.test(getComputedStyle(document.querySelector('.tile .label')).fontFamily)));
+    await look({ focus: 'glass', apps: 'both', controls: 'icons' });
+    check('Home names use the TV system font (One UI Sans)', await current.evaluate(() => /^"?One UI Sans APP"?,/.test(getComputedStyle(document.querySelector('.ph-name')).fontFamily)));
     check('No font files are requested', await current.evaluate(() => !performance.getEntriesByType('resource').some(r => /\.(woff2?|ttf|otf)(\?|$)/.test(r.name))));
     for (const patch of [{ bg: 'dark' }, { bg: 'light' }, { font: 'newsreader' }, { material: 'tint' }, { wall: 'misty' }]) {
       const message = 'Invalid appearance value: ' + Object.keys(patch)[0];
@@ -551,12 +557,12 @@ try {
       const error = await current.evaluate(patch => { try { ShoreQA.look(patch); return null; } catch (e) { return e.message; } }, patch);
       check('Retired appearance ' + JSON.stringify(patch) + ' is rejected', error === message && (await state()).writes === writes && (await state()).look.bg === 'photo', error);
     }
-    for (const layout of ['list', 'dock']) for (const width of [1920, 1280]) {
-      await current.setViewportSize({ width, height: width * 9 / 16 }); await look({ layout });
+    for (const width of [1920, 1280]) {
+      await current.setViewportSize({ width, height: width * 9 / 16 });
       await current.waitForFunction(w => Math.abs(document.getElementById('stage').getBoundingClientRect().width - w) < 1, width);
       const g = await current.evaluate(() => { const b = document.getElementById('stage').getBoundingClientRect(); return { x: b.x, y: b.y, width: b.width, height: b.height, focus: ShoreQA.where().focusCount }; });
-      check(layout + ' fits ' + width + ' with one focus', Math.abs(g.x) < 1 && Math.abs(g.y) < 1 && Math.abs(g.width - width) < 1 && Math.abs(g.height - width * 9 / 16) < 1 && g.focus === 1, g);
-      await current.screenshot({ path: out + 'production-' + layout + '-' + width + '.jpg', quality: 90 });
+      check('List fits ' + width + ' with one focus', Math.abs(g.x) < 1 && Math.abs(g.y) < 1 && Math.abs(g.width - width) < 1 && Math.abs(g.height - width * 9 / 16) < 1 && g.focus === 1, g);
+      await current.screenshot({ path: out + 'production-list-' + width + '.jpg', quality: 90 });
     }
     check('No live blur/backdrop filters', (await noLiveFilters()).length === 0, await noLiveFilters());
     const before = (await state()).look; await current.reload(); await ready(); check('Appearance survives reload', same((await state()).look, before));
@@ -566,19 +572,19 @@ try {
     const overview = await current.evaluate(() => [...document.querySelectorAll('.settings-group')].filter(e => e.getClientRects().length).map(e => ({
       action: e.getAttribute('data-action'), name: e.querySelector('.settings-group-name').textContent, value: e.querySelector('.settings-group-value').textContent, chevron: !!e.querySelector('.ico') })));
     check('Overview shows Apps on Home, Visual and Samsung Home in order', same(overview.map(r => [r.action, r.name]),
-      [['settings.editor', 'Apps on Home'], ['settings.group.layout', 'Visual'], ['settings.group.samsung', 'Samsung Home']]), overview);
+      [['settings.editor', 'Apps on Home'], ['settings.group.visual', 'Visual'], ['settings.group.samsung', 'Samsung Home']]), overview);
     check('Overview has no retired Background, Typography, Focus, TV settings or Inputs rows',
       !(await call('actions')).some(a => /settings\.group\.(background|typography|focus|inputs)|samsung\.(settings|inputs)/.test(a)) && !overview.some(r => /Background|Typography|TV settings|Inputs/.test(r.name)), await call('actions'));
     check('Only views carry a chevron; Samsung Home is a direct action', same(overview.map(r => r.chevron), [true, true, false]), overview);
     check('Overview opens with Apps on Home focused', (await state()).focusAction === 'settings.editor');
-    await nav('down'); check('Down reaches Visual', (await state()).focusAction === 'settings.group.layout');
+    await nav('down'); check('Down reaches Visual', (await state()).focusAction === 'settings.group.visual');
     await nav('down'); check('Down reaches Samsung Home without launching it', (await state()).focusAction === 'settings.group.samsung' && (await current.evaluate(() => __tv.calls.length)) === 0);
     await nav('up', 'up'); check('Up returns to Apps on Home', (await state()).focusAction === 'settings.editor');
-    const sections = { layout: ['list', 'dock'], focus: ['glass', 'type'], apps: ['text', 'icons', 'both'], controls: ['text', 'icons', 'both'], inputs: ['connected', 'always'] };
-    await group('layout');
+    const sections = { focus: ['glass', 'type'], apps: ['text', 'icons', 'both'], controls: ['text', 'icons', 'both'], inputs: ['connected', 'always'] };
+    await group('visual');
     check('Visual opens the appearance view titled Visual', (await state()).view === 'appearance' && (await current.locator('#appearanceTitle').innerText()).trim() === 'Visual');
     const titles = await current.evaluate(() => [...document.querySelectorAll('#appearanceRows .setting-label')].map(e => e.textContent.trim()));
-    check('Visual rows are Layout, Focus, App display, Home controls, Inputs on Home and Clock', same(titles, ['Layout', 'Focus', 'App display', 'Home controls', 'Inputs on Home', 'Clock']), titles);
+    check('Visual rows are Focus, App display, Home controls, Inputs on Home and Clock (no Layout)', same(titles, ['Focus', 'App display', 'Home controls', 'Inputs on Home', 'Clock']) && !(await call('actions')).some(a => a.startsWith('choice.layout.')), titles);
     const options = await radios(), committed = (await state()).committed;
     for (const [axis, values] of Object.entries(sections)) {
       const rows = options.filter(r => r.action?.startsWith('choice.' + axis + '.'));
@@ -591,7 +597,7 @@ try {
     check('Visual has no background, font, gallery or rotation choices', !(await call('actions')).some(a => /choice\.(bg|font)\.|wallpaper|rotation|source/.test(a)));
     check('Visual detail has no persistent category rail', !(await call('actions')).some(a => a.startsWith('settings.group.')));
     await nav('back');
-    check('Visual Back restores overview category focus', (await state()).view === 'settings' && (await state()).focusAction === 'settings.group.layout', await call('where'));
+    check('Visual Back restores overview category focus', (await state()).view === 'settings' && (await state()).focusAction === 'settings.group.visual', await call('where'));
   });
   await run('Samsung Home is a direct Settings action', async () => {
     await page(); await scene('settings');
@@ -610,7 +616,7 @@ try {
   });
   await run('Settings focus never changes the applied Home', async () => {
     await page();
-    for (const name of ['layout']) {
+    for (const name of ['visual']) {
       await group(name); const before = await settingsSnapshot();
       const visited = new Set();
       for (const direction of ['right', 'right', 'down', 'left', 'left', 'down', 'right', 'right', 'down', 'right', 'down', 'left', 'up', 'up', 'up', 'right']) {
@@ -633,24 +639,23 @@ try {
     check('Browsing the overview onto Samsung Home does not launch a native app', (await current.evaluate(() => __tv.calls.length)) === 0 && same(await settingsSnapshot(), before));
   });
   await run('Settings on-screen Back preserves choice focus', async () => {
-    await page(); await group('layout'); const before = await settingsSnapshot();
+    await page(); await group('visual'); const before = await settingsSnapshot();
     const candidate = await unselectedChoice();
     await act('settings.back');
-    check('On-screen Back returns to the matching overview category', (await state()).view === 'settings' && (await state()).focusAction === 'settings.group.layout');
+    check('On-screen Back returns to the matching overview category', (await state()).view === 'settings' && (await state()).focusAction === 'settings.group.visual');
     check('On-screen Back keeps unconfirmed choice unapplied', same(await settingsSnapshot(), before));
-    await act('settings.group.layout');
+    await act('settings.group.visual');
     check('Reopening restores the last real choice after on-screen Back', (await state()).focusAction === candidate.action, { expected: candidate.action, actual: (await state()).focusAction });
-    await nav('back'); await act('settings.group.layout');
+    await nav('back'); await act('settings.group.visual');
     check('Physical Back also preserves the last real choice', (await state()).focusAction === candidate.action);
   });
   await run('Settings OK applies explicit choices atomically', async () => {
     await page();
     const specs = [
-      ['layout', 'layout', ['list', 'dock']],
-      ['layout', 'focus', ['type', 'glass']],
-      ['layout', 'apps', ['icons', 'text', 'both']],
-      ['layout', 'controls', ['text', 'both', 'icons']],
-      ['layout', 'inputs', ['always', 'connected']]
+      ['visual', 'focus', ['type', 'glass']],
+      ['visual', 'apps', ['icons', 'text', 'both']],
+      ['visual', 'controls', ['text', 'both', 'icons']],
+      ['visual', 'inputs', ['always', 'connected']]
     ];
     for (const [name, axis, values] of specs) {
       await group(name);
@@ -662,20 +667,20 @@ try {
         const expectedWrites = before.writes + (before.committed[axis] === value ? 0 : 1);
         const untouched = { ...after.committed, [axis]: before.committed[axis] };
         // Inputs on Home changes which entries Home lists, not a stage class.
-        const prefix = { layout: 'l', apps: 'a', controls: 'u', focus: 'f' }[axis];
+        const prefix = { apps: 'a', controls: 'u', focus: 'f' }[axis];
         const shown = !Object.hasOwn(after.shown, axis) || after.shown[axis] === value;
         check(axis + ' OK applies ' + value + ' once', after.committed[axis] === value && shown && (!prefix || after.rendered.includes(prefix + '-' + value)) && same(untouched, before.committed) && expectedWrites === after.writes && after.storageAttempts - before.storageAttempts === expectedWrites - before.writes && rows.some(r => r.action === 'choice.' + axis + '.' + value && r.checked === 'true'), { before, after, rows });
       }
       const applied = await settingsSnapshot(); await nav('back');
       check(axis + ' applied choice survives Back', same(await settingsSnapshot(), applied) && (await state()).focusAction === 'settings.group.' + name);
     }
-    await group('layout'); const before = await settingsSnapshot(), candidate = await unselectedChoice();
+    await group('visual'); const before = await settingsSnapshot(), candidate = await unselectedChoice();
     const [, axis, value] = candidate.action.split('.');
     await current.keyboard.down('Enter'); await current.keyboard.down('Enter'); await ready();
     check('Held physical OK applies the focused choice once', (await state()).committed[axis] === value && (await state()).writes === before.writes + 1);
     await current.keyboard.up('Enter');
     await current.keyboard.down('Escape'); await current.keyboard.down('Escape');
-    check('Held physical Back closes one settings layer', (await state()).view === 'settings' && (await state()).focusAction === 'settings.group.layout');
+    check('Held physical Back closes one settings layer', (await state()).view === 'settings' && (await state()).focusAction === 'settings.group.visual');
     await current.keyboard.up('Escape');
   });
   await run('Settings choices fit both target viewports', async () => {
@@ -690,7 +695,7 @@ try {
       });
       check('Settings overview rows fit ' + width + ' without clipping', rows.length === 3 && rows.every(r => r.inside && r.fits) && (await call('where')).focusCount === 1, rows);
       await current.screenshot({ path: out + 'settings-overview-' + width + '.jpg', quality: 90 });
-      for (const name of ['layout']) {
+      for (const name of ['visual']) {
         await group(name);
         const geometry = await current.evaluate(() => {
           const stage = document.getElementById('stage').getBoundingClientRect();
@@ -725,7 +730,7 @@ try {
     check('Held Back closes one layer only', (await call('where')).view === 'settings' && (await state()).focusAction === 'settings.editor');
     await current.keyboard.up('Escape'); await current.keyboard.press('Escape');
     check('Released Back reaches Home', (await call('where')).view === 'home');
-    const startAt = (await call('where')).focusAction, next = (await state()).look.layout === 'list' ? 'ArrowDown' : 'ArrowRight';
+    const startAt = (await call('where')).focusAction, next = 'ArrowDown';
     await current.keyboard.down(next); await current.waitForTimeout(200);
     const early = (await call('where')).focusAction;
     await current.waitForTimeout(450); await current.keyboard.up(next);
@@ -733,7 +738,7 @@ try {
     check('Held arrow moves at once, repeats from 280 ms and stops on release', early !== startAt && held !== early && (await call('where')).focusAction === held, { startAt, early, held });
   });
   await run('List Glass focus and remote movement', async () => {
-    await page(); await look({ layout: 'list', focus: 'glass' }); await scene('home');
+    await page(); await look({ focus: 'glass' }); await scene('home');
     const plate = () => current.evaluate(() => { const el = document.querySelector('#phScene > .ph-plate.is-current'); return el ? el.className : ''; });
     const at = async () => (await call('where')).focusAction;
     const first = await at();
@@ -752,7 +757,7 @@ try {
     const stalled = await at(), holding = await call('holding'); await current.waitForTimeout(300);
     check('A hold with no TV repeat events stops after its watchdog', !holding && (await at()) === stalled, stalled);
     await current.keyboard.up('ArrowUp');
-    await group('layout'); await current.waitForTimeout(250);
+    await group('visual'); await current.waitForTimeout(250);
     check('Settings Focus preview keeps a half plate on the selected app', /on-sel/.test(await plate()), await plate());
   });
   await run('Bridge key', async () => {
@@ -954,15 +959,18 @@ try {
   });
   await run('Scrolled On Home column in the editor', async () => {
     const home = ['livetv', 'youtube', 'netflix', 'espn', 'primevideo', 'browser', 'hdmi1', 'hdmi2', 'hdmi3', 'hdmi4', 'stremio', 'disneyplus', 'appletv', 'abciview', 'sbs'];
-    await page({ seed: { home, recent: ['applemusic'], look: { layout: 'dock', inputs: 'always' } } });
+    await page({ seed: { home, recent: ['applemusic'], look: { inputs: 'always' } } });
     await current.evaluate(() => ShoreQA.scene('editor')); await current.waitForTimeout(200);
     await nav(...Array(14).fill('down')); await nav('right', 'right'); await current.waitForTimeout(100);
     const other = await current.evaluate(() => { const e = document.querySelector('.eo.is-focus'); if (!e) throw Error('No Not on Home focus: ' + ShoreQA.where().focusAction + ' / ' + ShoreQA.state().dock.length); return e.getBoundingClientRect().top; });
     await nav('left'); await current.waitForTimeout(100);
     const landed = await current.evaluate(() => document.querySelector('.er.is-active').getBoundingClientRect().top);
-    check('Left from Not on Home lands on the On Home row level with it after the column scrolled', Math.abs(landed - other) < 40, { other, landed });
+    // The nearest visible On Home row: rows are 80px apart (104px across the 'Then scroll' break), so it is at most 52px away.
+    const rowTops = await current.evaluate(() => [...document.querySelectorAll('.er')].filter(e => getComputedStyle(e).visibility !== 'hidden').map(e => e.getBoundingClientRect().top));
+    const nearest = Math.min(...rowTops.map(top => Math.abs(top - other)));
+    check('Left from Not on Home lands on the On Home row level with it after the column scrolled', Math.abs(Math.abs(landed - other) - nearest) < 1 && nearest <= 52, { other, landed, rowTops });
     await closePage();
-    await page({ seed: { home, look: { layout: 'dock', inputs: 'always' } } });
+    await page({ seed: { home, look: { inputs: 'always' } } });
     await current.evaluate(() => ShoreQA.scene('editor')); await current.waitForTimeout(200);
     await nav('ok', ...Array(10).fill('down')); await current.waitForTimeout(400);
     const origin = await current.evaluate(() => { const o = document.querySelector('.ed-origin'), col = document.querySelector('.ed-home').getBoundingClientRect(); return { on: o.classList.contains('is-on'), top: o.getBoundingClientRect().top, column: col.top }; });

@@ -70,7 +70,7 @@
     // The frosted sheet uses the same look, a touch darker for legible text.
     // A preview is a 480x270 copy stretched to the screen: softened (and scaled past the blur's dark edge) so
     // it reads as the photo coming into focus rather than as compression blocks.
-    el.textContent = '.source-art #photo,.source-art #sheetBg,.source-art #matImg{filter:' + st.filter + '}' +
+    el.textContent = '.source-art #photo,.source-art #sheetBg{filter:' + st.filter + '}' +
       '.source-art #photo.is-preview{filter:blur(10px) ' + st.filter + ';transform:scale(1.03)}.source-art #bg::after{content:"";position:absolute;left:0;top:0;right:0;bottom:0;background:' + st.tint + ';mix-blend-mode:multiply;pointer-events:none}' +
       '.source-art .sheet-veil{background:' + st.veil + ';mix-blend-mode:multiply}';
     funcs.forEach(function (id, i) { var f = document.getElementById(id); if (f) f.setAttribute('exponent', String(st.gamma[i])); });

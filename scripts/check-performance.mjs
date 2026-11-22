@@ -112,12 +112,10 @@ try {
   const start = Date.now();
   await page.goto(preview.baseURL + '/home/'); await ready(); await page.waitForLoadState('networkidle');
   report.startupMs = Date.now() - start;
-  await look({ layout: 'list', apps: 'both', controls: 'icons', focus: 'glass' });
+  await look({ apps: 'both', controls: 'icons', focus: 'glass' });
   await sample('Photo List navigation', ['down', 'down', 'down', 'up', 'up', 'up']);
-  await look({ layout: 'dock' });
-  await sample('Photo Dock navigation', ['right', 'right', 'right', 'left', 'left', 'left']);
-  await call('nav', 'up');
-  await sample('Dock utilities', ['right', 'right', 'left', 'left']);
+  await call('nav', 'right');
+  await sample('List Home controls', ['up', 'up', 'down', 'down']);
   await scene('settings');
   await sample('Settings navigation', ['down', 'down', 'up', 'up']);
   await scene('apps');
@@ -132,13 +130,13 @@ try {
   await scene('appearance');
   await sample('Appearance row navigation', ['down', 'down', 'down', 'up', 'up', 'up']);
   await scene('home');
-  await look({ layout: 'list', apps: 'text', controls: 'text' });
+  await look({ apps: 'text', controls: 'text' });
   await sample('Text List navigation', ['down', 'down', 'down', 'up', 'up', 'up']);
   await call('nav', 'right');
   await sample('Text Home controls', ['up', 'up', 'down', 'down']);
 
   // Art Mode is the only background; cycle the remaining Home appearance axes instead.
-  const cycle = [{ layout: 'dock', focus: 'glass', apps: 'both' }, { layout: 'list', focus: 'type', apps: 'text' }, { layout: 'list', focus: 'glass', apps: 'icons' }];
+  const cycle = [{ focus: 'glass', apps: 'both' }, { focus: 'type', apps: 'text' }, { focus: 'glass', apps: 'icons' }];
   const loadTimes = [];
   await scene('home');
   for (const patch of cycle) {
@@ -171,7 +169,7 @@ try {
   report.liveFilters = await page.evaluate(() => [...document.querySelectorAll('#stage, #stage *')].filter(e => e.getClientRects().length).map(e => {
     const s = getComputedStyle(e);
     // As in check-browser: the Art photo and its frosted sheet copy may carry the static #artCurve colour curve only.
-    const curve = document.getElementById('artCurve'), colourOnly = (e.id === 'photo' || e.id === 'sheetBg' || e.id === 'matImg') && curve && curve.querySelectorAll('*').length === [...curve.querySelectorAll('feComponentTransfer, feFuncR, feFuncG, feFuncB')].length;
+    const curve = document.getElementById('artCurve'), colourOnly = (e.id === 'photo' || e.id === 'sheetBg') && curve && curve.querySelectorAll('*').length === [...curve.querySelectorAll('feComponentTransfer, feFuncR, feFuncG, feFuncB')].length;
     return { tag: e.tagName, cls: e.className, filter: colourOnly ? s.filter.replace(/url\("?#artCurve"?\)/, '') : s.filter, backdrop: s.backdropFilter || s.webkitBackdropFilter || 'none' };
   }).filter(s => /blur|url\(/.test(s.filter) || s.backdrop !== 'none'));
   check('No runtime optical blur/backdrop layer', report.liveFilters.length === 0, report.liveFilters);

@@ -2,9 +2,9 @@
 
 A home screen for Samsung The Frame. It shows your apps and the time over the current Art Mode photo, and you drive it with the TV remote.
 
-![Dock layout in an earlier upstream build](docs/images/cleanframe-dock.jpg)
+![The List layout in an earlier build of this fork](docs/screenshots/home-espn-public.png)
 
-*Earlier upstream build. It had a bundled wallpaper and a wallpaper control, and this fork has removed both.*
+*Earlier build of this fork, on a generated test background instead of an Art Mode photo, with the fonts and Home controls of that time.*
 
 This is a personal fork of [nthnclrk/CleanFrame](https://github.com/nthnclrk/CleanFrame) for one rooted Frame. It is public so others can read and adapt it. **Use it at your own risk.** The setup scripts and native helpers assume particular computers, models and firmware.
 
@@ -17,9 +17,9 @@ This is a personal fork of [nthnclrk/CleanFrame](https://github.com/nthnclrk/Cle
 
 ## What it does
 
-- **Background:** always the current Art Mode photo, shown with a calibrated Art look (`app/art-mode.js`). The look follows Art Mode's brightness and colour temperature as reported by the bridge. Sheets and the dock sit on a frosted copy of the photo. The app makes this copy once per photo at 480×270 with a canvas blur and keeps it between launches. At launch, Home checks which photo is current first, so an older photo never flashes up; a softened preview of the right photo covers the decode.
+- **Background:** always the current Art Mode photo, shown with a calibrated Art look (`app/art-mode.js`). The look follows Art Mode's brightness and colour temperature as reported by the bridge. Sheets sit on a frosted copy of the photo. The app makes this copy once per photo at 480×270 with a canvas blur and keeps it between launches. At launch, Home checks which photo is current first, so an older photo never flashes up; a softened preview of the right photo covers the decode.
 - **Typeface:** the TV's own system font, One UI Sans, with a standard sans-serif fallback in browsers (`FONT_STACK` in `app/main.js`). No font files are shipped.
-- **Home:** up to 24 apps in a List or Dock layout. Focus is either a Glass pill with a spring or Text only. The clock can show the weather. HDMI entries on Home can appear only while their input is connected, or always.
+- **Home:** up to 24 apps in a scrolling list. Focus is either a Glass pill with a spring or Text only. The clock can show the weather. HDMI entries on Home can appear only while their input is connected, or always.
 - **All apps:** Live TV and HDMI 1–4 come first, followed by the installed consumer apps in alphabetical order.
 - **Settings:** three rows. **Apps on Home** opens the editor, **Visual** holds the appearance choices, and **Samsung Home** opens Samsung's Home screen.
 - **Owner controls (optional):** these are configured on the TV in `cleanframe.controls.v1`. **Lights** asks the bridge to fire a Vetro rule that publishes MQTT. **Cameras** shows a go2rtc MJPEG grid and can play a single camera full screen.

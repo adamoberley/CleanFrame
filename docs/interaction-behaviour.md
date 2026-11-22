@@ -2,12 +2,11 @@
 
 ## Home
 
-- Dock: Left/Right scrolls the apps without wrapping. Up enters the top-right controls (Lights and Cameras when configured, then Apps and Settings), starting at the last selected control. Left/Right moves between them. Down or Back returns to the selected app. The clock is at the top left.
-- List: Up/Down scrolls the apps without wrapping. Right enters the right-hand controls at whichever one is level with the focused row. Up/Down moves between the controls. Left or Back returns to the selected app. With Glass focus, only one control shows focus: the list row has no plate while a control is focused. Seven apps fit before the list fades at both ends as it scrolls. The clock uses the same face and weight as the app names.
+- Home is a single List layout. Up/Down scrolls the apps without wrapping. Right enters the right-hand controls (Lights and Cameras when configured, then Apps and Settings) at whichever one is level with the focused row. Up/Down moves between the controls. Left or Back returns to the selected app. With Glass focus, only one control shows focus: the list row has no plate while a control is focused. Seven apps fit before the list fades at both ends as it scrolls. The clock uses the same face and weight as the app names.
 - Remote keys: a held arrow moves at once, repeats after 280 ms and then every 110 ms until released, sooner than the TV's own auto-repeat. Presses less than 360 ms apart switch focus without the spring or crossfade so it keeps up; the spring returns when movement pauses. Glass focus on the list is a fully rounded pill sized to the focused name, which grows 6% with a light spring; reduced motion keeps it still.
 - OK opens the selected item. Focus alone never launches an app. The app shows no remote-key hints; the focused control is the cue.
 - Icons-only apps and controls reveal their names when focused. App presentation and control presentation are independent.
-- Back from the app list or Dock opens a choice to stay or open Samsung Home.
+- Back from the app list opens a choice to stay or open Samsung Home.
 - A panel keeps focus within its own controls. Back closes one panel at a time.
 - Returning to the running launcher keeps the selected app or panel item. There is no auto-return timer. Held OK and Back keys act once until the key is released, or until 1 s after their last event if the TV loses the release.
 
@@ -17,7 +16,6 @@ Settings has three rows: **Apps on Home** (the membership and arrangement editor
 
 | Visual row | Choices |
 | --- | --- |
-| Layout | List or Dock (default) |
 | Focus | Glass (default) or Text; on Art Mode, Glass is a translucent frosted pill |
 | App display | Text, Icons or Both (default) |
 | Home controls | Text, Icons or Both (default) |
@@ -46,7 +44,7 @@ The five-column grid scrolls with remote focus. OK launches an app or selects th
 
 ## Apps on Home
 
-Open the editor from Settings › Apps on Home, or with Add apps when Home is empty. On Home shows the current order on the left. Not on Home shows Recently removed first, followed by other installed apps on the right. Home holds one to 24 apps; the On Home column scrolls, and a "Then scroll" line marks where Home itself starts scrolling (after seven apps in List, five in Dock).
+Open the editor from Settings › Apps on Home, or with Add apps when Home is empty. On Home shows the current order on the left. Not on Home shows Recently removed first, followed by other installed apps on the right. Home holds one to 24 apps; the On Home column scrolls, and a "Then scroll" line marks where Home itself starts scrolling (after seven apps).
 
 - Reorder: OK on an app name picks it up. Up/Down moves it. OK places it and saves the order. Back puts an unplaced app back without saving that move.
 - Remove: Right from an app name reaches Remove from Home. OK saves the removal and moves focus to the same app in Recently removed. The app stays installed.
@@ -77,11 +75,11 @@ Selecting a source, seeing the expected HDMI picture and waking a CEC device are
 
 ## Preferences and background
 
-The launcher stores appearance, Home order, recently removed apps and the last launched Home app locally. List and Dock share these preferences. The existing `cleanframe.home.v1` key is retained, with a fallback read from `cleanframe.shore.v1`. Legacy List maps to List + Text focus; Glass Dock and Glass Grid map to Dock + Glass. App order and the last Home app are preserved.
+The launcher stores appearance, Home order, recently removed apps and the last launched Home app locally. The existing `cleanframe.home.v1` key is retained, with a fallback read from `cleanframe.shore.v1`. Legacy List maps to Text focus; Glass Dock and Glass Grid map to Glass focus. List is the only layout: a saved Dock layout loads as List and keeps every other choice. App order and the last Home app are preserved.
 
 The Art Mode photo is the only Home background. Saved Light, Dark, Photo or gallery backgrounds load as Art Mode. Retired fields (`wallpaper`, `mode`, `wall`, `material`, `font`) are accepted when reading old preferences and dropped on the next write.
 
-Art Mode reads the last-good app-private image before asynchronously refreshing on visible Home lifecycle events. Arrow-key navigation performs no networking, and hidden startup does not poll. After Home has been shown, a hidden Home waits for the Art photo to change and installs a new one out of sight, so Home comes back showing it. Back, hiding, failed loads and preference-write failures keep the previous completed appearance. If no image has ever been cached, startup uses an inline neutral background while the bridge is unavailable. After the first frost is made, later launches show a small stored preview of the photo at once while the full image decodes. Art photos use outlined text, a static frosted Glass focus and a frosted copy of the photo behind panels and the dock (480×270 with a one-time canvas blur, stored across launches). [Setup and cache details](art-mode-wallpaper.md) include physical checks still required.
+Art Mode reads the last-good app-private image before asynchronously refreshing on visible Home lifecycle events. Arrow-key navigation performs no networking, and hidden startup does not poll. After Home has been shown, a hidden Home waits for the Art photo to change and installs a new one out of sight, so Home comes back showing it. Back, hiding, failed loads and preference-write failures keep the previous completed appearance. If no image has ever been cached, startup uses an inline neutral background while the bridge is unavailable. After the first frost is made, later launches show a small stored preview of the photo at once while the full image decodes. Art photos use outlined text, a static frosted Glass focus and a frosted copy of the photo behind panels (480×270 with a one-time canvas blur, stored across launches). [Setup and cache details](art-mode-wallpaper.md) include physical checks still required.
 
 ## Live TV
 
@@ -96,7 +94,7 @@ The native Home operation and startup configuration from 19 October remain separ
 
 ## Clock and rendering
 
-Both layouts show the TV's local time in 12-hour format, without AM/PM or seconds. It updates at the minute boundary and on return to the launcher. No date or clock panel is shown.
+Home shows the TV's local time in 12-hour format, without AM/PM or seconds. It updates at the minute boundary and on return to the launcher. No date or clock panel is shown.
 
 Art Mode photos are shown through the static calibrated Art look (see [Art Mode wallpaper sync](art-mode-wallpaper.md#calibrated-art-look)) with no other full-screen scrim; Glass focus is a static translucent frosted pane with outlined text, without precomputed photo metadata. Navigation does not sample image pixels, run an optics engine or apply live backdrop blur. Focus feedback uses transforms and opacity; reduced motion removes animated scaling and movement while retaining opacity feedback.
 

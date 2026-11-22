@@ -9,7 +9,7 @@ const require = createRequire(import.meta.url);
 const jpeg = readFileSync(root + 'scripts/fixtures/art-test.jpg');
 const size = require('../vetro/cleanframe-art/index.js').jpegSize(jpeg);
 const first = createHash('sha256').update('fixture A').digest('hex'), second = createHash('sha256').update('fixture B').digest('hex'), third = createHash('sha256').update('fixture C').digest('hex'), fourth = createHash('sha256').update('fixture D').digest('hex'), fifth = createHash('sha256').update('fixture E').digest('hex');
-// Includes retired fields (wall, material, font, mode) that migration accepts and drops.
+// Includes retired fields (wall, material, font, mode) that migration accepts and drops, and the retired Dock layout, which loads as List.
 const seed = { look: { bg: 'photo', wall: 'misty', source: 'art', layout: 'dock', focus: 'glass', material: 'soft', font: 'inter', apps: 'both', controls: 'both' }, mode: '15' };
 const out = root + '.local/qa/'; mkdirSync(out, { recursive: true });
 let preview, p;
@@ -18,7 +18,7 @@ function check(name, condition) { assert.ok(condition, name); checks.push(name);
 const state = () => p.evaluate(() => ShoreQA.state());
 const ready = () => p.waitForFunction(() => ShoreQA.ready());
 const act = action => p.evaluate(action => ShoreQA.activate(action), action);
-async function group() { await p.evaluate(() => { ShoreQA.scene('settings'); ShoreQA.activate('settings.group.layout'); }); }
+async function group() { await p.evaluate(() => { ShoreQA.scene('settings'); ShoreQA.activate('settings.group.visual'); }); }
 async function scene(name) { await p.evaluate(n => ShoreQA.scene(n), name); await ready(); }
 async function fresh(options = {}) {
   if (p) await p.close();
@@ -70,7 +70,6 @@ try {
   await p.evaluate(() => ShoreQA.nav('down', 'down', 'down', 'right', 'left', 'up', 'down'));
   check('Visual remote navigation performs no further bridge networking', f.calls.length === 3);
   check('Art installs the bridge photo as the background', new Set(await artImages()).size === 1 && (await artImages())[0].startsWith('blob:'));
-  check('The dock mat is hidden until it can use the frosted Art copy', await p.evaluate(() => document.getElementById('stage').classList.contains('source-art') && (() => { const m = document.getElementById('matImg'); return getComputedStyle(m).visibility === 'hidden' || m.classList.contains('is-frost') && /^data:image\/jpeg/.test(m.src); })()));
   await p.screenshot({ path: out + 'art-background-public.png' });
   check('Sheets sit on a frosted copy of the Art photo with the same look', await p.evaluate(async () => {
     ShoreQA.scene('settings'); await new Promise(r => setTimeout(r, 120));
@@ -85,9 +84,8 @@ try {
   check('Art Settings retains single focus at 720p', (await p.evaluate(() => ShoreQA.where())).focusCount === 1);
   await p.screenshot({ path: out + 'art-background-720-public.png' });
   await p.setViewportSize({ width: 1920, height: 1080 });
-  await scene('home'); await p.screenshot({ path: out + 'art-dock-public.png' });
-  await p.evaluate(() => ShoreQA.look({ layout: 'list' })); await ready(); await p.screenshot({ path: out + 'art-list-public.png' });
-  check('List and Dock keep single remote focus with Art Mode', (await p.evaluate(() => ShoreQA.where())).focusCount === 1);
+  await scene('home'); await p.screenshot({ path: out + 'art-list-public.png' });
+  check('List keeps single remote focus with Art Mode', (await state()).committed.layout === 'list' && (await p.evaluate(() => ShoreQA.where())).focusCount === 1);
   const calls = f.calls.length;
   await p.evaluate(() => ShoreQA.nav('down','down','up','right','left'));
   check('Remote movement does not refresh art', f.calls.length === calls);
@@ -177,7 +175,6 @@ try {
   const defaults = (await state()).dock;
   check('Fresh defaults include ESPN, Browser, HDMI 4 and antenna Live TV without Australian services', defaults.length === 7 && defaults[0] === 'livetv' && ['espn', 'browser', 'hdmi4'].every(id => defaults.includes(id)) && !defaults.includes('abciview') && !defaults.includes('sbs'));
   await p.screenshot({ path: out + 'home-defaults-public.png' });
-  await p.evaluate(() => ShoreQA.look({ layout: 'list' })); await ready();
   check('Home entries use ESPN PNG and original TV mark', await p.evaluate(() => {
     const espn = document.querySelector('[data-action="home.app.espn"] .mk'), tv = document.querySelector('[data-action="home.app.livetv"] .mk');
     return espn && tv && espn.style.webkitMaskImage.indexOf('espn.png') >= 0 && tv.style.webkitMaskImage.indexOf('livetv.svg') >= 0;
@@ -188,7 +185,7 @@ try {
   await p.evaluate(() => ShoreQA.nav('down','down','down','down','down','down','down'));
   await p.waitForTimeout(200);
   await p.screenshot({ path: out + 'home-espn-public.png' });
-  await fresh({ seed: { ...seed, look: { ...seed.look, layout: 'list' }, home: ['livetv', 'youtube', 'netflix', 'espn', 'primevideo', 'browser', 'stremio', 'disneyplus', 'appletv'] } });
+  await fresh({ seed: { ...seed, home: ['livetv', 'youtube', 'netflix', 'espn', 'primevideo', 'browser', 'stremio', 'disneyplus', 'appletv'] } });
   await p.waitForFunction(() => !!ShoreQA.state().shown.artRevision); await p.waitForTimeout(250);
   const rows = await p.evaluate(() => { const list = document.getElementById('phList').getBoundingClientRect(); return [...document.querySelectorAll('#phRows .ph-row .ph-name')].map(e => { const r = e.getBoundingClientRect(); return { top: r.top - list.top, bottom: r.bottom - list.top }; }); });
   // The list mask is opaque from 96px to 976px of its 1040px box.
