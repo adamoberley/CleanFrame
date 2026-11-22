@@ -7,9 +7,9 @@ const source = readFileSync(new URL('../app/art-mode.js', import.meta.url), 'utf
 const A = 'a'.repeat(64), B = 'b'.repeat(64), C = 'c'.repeat(64), META = 'cleanframe.art.cache.v1';
 const meta = revision => ({ revision, contentId: 'MY_TEST', imageUrl: '/art/' + revision + '/image.jpg', width: 1920, height: 1080 });
 const jpeg = new Uint8Array([255,216,0,0,0,0,0,0,0,0,255,217]);
-function harness({ files = new Map(), storage = new Map(), failMove = false, corrupt = new Set(), hangMove = false, image = jpeg, noQuick = false } = {}) {
+function harness({ files = new Map(), storage = new Map(), failMove = false, corrupt = new Set(), hangMove = false, image = jpeg, noQuick = false, asyncList = false } = {}) {
   const requests = [];
-  let next = A, look = null, slowFull = false, fullHeld = [], offline = false, held = [], hold = false, deleted = [], order = [], revoked = [], urlNo = 0, clock = 0;
+  let wait = { status: 204 }, waitHeld = [], next = A, look = null, slowFull = false, fullHeld = [], offline = false, held = [], hold = false, deleted = [], order = [], revoked = [], urlNo = 0, clock = 0;
   const timers = new Map();
   const dir = { fullPath: 'wgt-private/cleanframe-art',
     resolve(name) { if (!files.has(name)) throw Error('Not found'); return file(name); },
@@ -20,7 +20,7 @@ function harness({ files = new Map(), storage = new Map(), failMove = false, cor
       if (failMove || !files.has(from.split('/').pop())) { fail(); return; }
       const src = from.split('/').pop(), dst = to.split('/').pop(); files.set(dst, files.get(src)); files.delete(src); order.push('move:' + dst); ok();
     },
-    listFiles(ok) { ok([...files.keys()].map(name => ({ name, fullPath: dir.fullPath + '/' + name }))); }
+    listFiles(ok) { const list = () => ok([...files.keys()].map(name => ({ name, fullPath: dir.fullPath + '/' + name }))); if (asyncList) setImmediate(list); else list(); }
   };
   function file(name) {
     return { isFile: true, name, fileSize: files.get(name).length, fullPath: dir.fullPath + '/' + name, toURI: () => 'file:///' + dir.fullPath + '/' + name,
@@ -39,11 +39,16 @@ function harness({ files = new Map(), storage = new Map(), failMove = false, cor
       const respond = () => {
         if (offline) { this.onerror(); return; }
         if (noQuick && this.url.endsWith('?quick=1')) { this.status = 404; this.onload(); return; }
+        if (this.url.includes('/art/wait.json?since=')) {
+          if (wait.offline) { this.status = 0; this.onerror(); return; }
+          this.status = wait.status; this.responseText = wait.meta ? JSON.stringify(wait.meta) : ''; this.onload(); return;
+        }
         this.status = 200;
         if (/\/current\.json(\?quick=1)?$/.test(this.url)) this.responseText = JSON.stringify(this.url.endsWith('?quick=1') ? meta(next) : { ...meta(next), ...(look ? { look } : {}) }); else this.response = image.buffer;
         this.onload();
       };
-      if (hold) held.push(respond); else if (slowFull && this.url.endsWith('/current.json')) fullHeld.push(respond); else queueMicrotask(respond);
+      if (this.url.includes('/art/wait.json') && wait.held) waitHeld.push(respond);
+      else if (hold) held.push(respond); else if (slowFull && this.url.endsWith('/current.json')) fullHeld.push(respond); else queueMicrotask(respond);
     }
     abort() { this.onabort?.(); }
   }
@@ -54,7 +59,8 @@ function harness({ files = new Map(), storage = new Map(), failMove = false, cor
   };
   vm.runInNewContext(source, context);
   const api = context.window.FrameArt;
-  return { api, files, storage, order, deleted, revoked, requests, next: value => { next = value; }, look: value => { look = value; }, slowFull: () => { slowFull = true; }, releaseFull: () => { fullHeld.splice(0).forEach(fn => fn()); }, offline: value => { offline = value; }, hold: () => { hold = true; }, release: () => { hold = false; held.forEach(fn => fn()); held = []; },
+  const context2 = context;
+  return { context: context2, waitReply: v => { wait = v; }, releaseWait: () => { waitHeld.splice(0).forEach(fn => fn()); }, api, files, storage, order, deleted, revoked, requests, next: value => { next = value; }, look: value => { look = value; }, slowFull: () => { slowFull = true; }, releaseFull: () => { fullHeld.splice(0).forEach(fn => fn()); }, offline: value => { offline = value; }, hold: () => { hold = true; }, release: () => { hold = false; held.forEach(fn => fn()); held = []; },
     timers, expire: () => { for (const fn of [...timers.values()]) fn(); }, load: () => new Promise(r => api.load(r)), refresh: () => new Promise(r => api.refresh(r)) };
 }
 test('Tizen private cache promotes a completed JPEG before its pointer and survives offline restart', async () => {
@@ -137,4 +143,37 @@ test('without a quick answer (an older bridge) the full read decides the photo',
   // Both reads failing reports Art unavailable.
   const down = harness({ noQuick: true }); down.offline(true);
   assert.equal(await down.refresh(), null); assert.match(down.api.status().error, /unavailable/);
+});
+
+const settle = () => new Promise(r => setImmediate(r));
+const watch = (h, since) => new Promise(r => h.api.watch(since, (rec, ms) => r({ rec, ms })));
+test('watch runs only while hidden: 204 asks again at once, a new photo is fetched and saved, errors back off', async () => {
+  const h = harness(); await h.load();
+  assert.deepEqual(await watch(h, A), { rec: null, ms: 1000 }); // Shown: no wait is sent.
+  assert.equal(h.requests.length, 0);
+  h.context.document.hidden = true;
+  assert.deepEqual(await watch(h, A), { rec: null, ms: 0 });
+  assert.equal(h.requests.at(-1), 'http://127.0.0.1:8643/art/wait.json?since=' + A);
+  h.waitReply({ status: 200, meta: meta(B) });
+  const got = await watch(h, A);
+  assert.equal(got.rec.revision, B); assert.equal(got.ms, 0); assert.equal(h.api.current().revision, B);
+  assert.equal(h.requests.at(-1), 'http://127.0.0.1:8643/art/' + B + '/image.jpg');
+  await settle();
+  assert.ok(h.files.has(B + '.jpg')); assert.equal(JSON.parse(h.storage.get(META)).revision, B);
+  // Already the current photo: no second download.
+  const n = h.requests.length; assert.equal((await watch(h, null)).rec.revision, B); assert.equal(h.requests.length, n + 1);
+  assert.equal(h.requests.at(-1), 'http://127.0.0.1:8643/art/wait.json?since=none');
+  h.waitReply({ status: 404 }); assert.deepEqual(await watch(h, B), { rec: null, ms: 600000 }); // Older bridge.
+  h.waitReply({ offline: true }); assert.deepEqual(await watch(h, B), { rec: null, ms: 30000 });
+  h.waitReply({ status: 200, meta: { ...meta(C), imageUrl: '/elsewhere.jpg' } }); assert.deepEqual(await watch(h, B), { rec: null, ms: 30000 });
+  // cancel() (Home shown) ends a wait without calling back.
+  h.waitReply({ status: 200, meta: meta(C), held: true }); let called = false;
+  h.api.watch(B, () => { called = true; }); h.api.cancel(); h.releaseWait(); await settle();
+  assert.equal(called, false); assert.equal(h.api.current().revision, B);
+});
+test('a save survives a cancel straight after the photo is handed over (Home installs it at once)', async () => {
+  const h = harness({ asyncList: true }); await h.load();
+  await new Promise(r => h.api.refresh(rec => { h.api.cancel(); r(rec); }));
+  for (let i = 0; i < 5; i++) await settle();
+  assert.ok(h.files.has(A + '.jpg')); assert.equal(JSON.parse(h.storage.get(META)).revision, A);
 });

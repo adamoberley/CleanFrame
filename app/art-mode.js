@@ -1,4 +1,5 @@
-/* Optional TV-local Art bridge client. Sends only the bridge's own per-install key; no polling, pixel reads or remote-key I/O. */
+/* Optional TV-local Art bridge client. Sends only the bridge's own per-install key; no pixel reads or remote-key I/O.
+   Its only repeated request is watch(): one long wait at a time, and only while Home is hidden. */
 (function () {
   'use strict';
   var MAX = 12 * 1024 * 1024, PORT_KEY = 'cleanframe.art.port', META_KEY = 'cleanframe.art.cache.v1', LOOK_KEY = 'cleanframe.art.look.v1', PREVIEW_KEY = 'cleanframe.art.preview.v2';
@@ -162,15 +163,17 @@
       });
     });
   }
-  function request(url, binary, done) {
+  // done(value, status): status is the HTTP status, or 0 when the request failed or was cut off.
+  function request(url, binary, done, timeoutMs) {
     var xhr = new window.XMLHttpRequest(), ended = false;
     function finish(value) {
       if (ended) return; ended = true;
       var i = requests.indexOf(xhr); if (i >= 0) requests.splice(i, 1);
-      done(value);
+      var status = 0; try { status = xhr.status; } catch (e) { status = 0; }
+      done(value, status);
     }
     try {
-      xhr.open('GET', url, true); xhr.timeout = binary ? 8000 : 3500;
+      xhr.open('GET', url, true); xhr.timeout = timeoutMs || (binary ? 8000 : 3500);
       authorize(xhr);
       if (binary) xhr.responseType = 'arraybuffer';
       xhr.onload = function () {
@@ -208,8 +211,10 @@
         if (released) return; released = true;
         [tempName, photo].forEach(function (name) { if (!--busy[name]) delete busy[name]; });
       };
+      // Once persist() is called the save goes ahead even if cancel() follows at once (Home installs a
+      // newly fetched photo straight away, which cancels): otherwise the next launch downloads it again.
       tidy(function () {
-        if (ended || g !== epoch) { release(); done(null); return; }
+        if (ended) { release(); done(null); return; }
         try {
           // A complete JPEG is promoted before the last-good pointer. Overwrite
           // an orphan of the same revision too: it may be a corrupt old cache.
@@ -279,27 +284,48 @@
       (function (m) {
         if (!metadata(m)) { finish(null); return; }
         if (current && current.revision === m.revision) { finish(current); return; }
-        request(base + m.imageUrl, true, function (bytes) {
-          if (g !== epoch) return;
-          if (!bytes || bytes.byteLength < 12) { finish(null); return; }
-          var data = new window.Uint8Array(bytes), blob, url;
-          if (data[0] !== 255 || data[1] !== 216 || data[data.length - 2] !== 255 || data[data.length - 1] !== 217) { finish(null); return; }
-          try { blob = new window.Blob([bytes], { type: 'image/jpeg' }); url = objectURL(blob); }
-          catch (e) { finish(null); return; }
-          validImage(m, url, function (ok) {
-            if (g !== epoch) return;
-            if (!ok) { finish(null); return; }
-            // Shown as soon as it decodes: the private save (up to a few seconds on the TV) finishes
-            // in the background, and only the next launch reads the saved copy.
-            persist(m, bytes, blob, url, g, function () {});
-            finish(record(m, url));
-          });
-        });
+        photo(base, m, g, finish);
       }(meta));
     }
   }
+  // Downloads and checks a photo the bridge named. It is usable as soon as it decodes: the private
+  // save (up to a few seconds on the TV) finishes in the background, and only the next launch reads it.
+  function photo(base, m, g, done) {
+    request(base + m.imageUrl, true, function (bytes) {
+      if (g !== epoch) return;
+      if (!bytes || bytes.byteLength < 12) { done(null); return; }
+      var data = new window.Uint8Array(bytes), blob, url;
+      if (data[0] !== 255 || data[1] !== 216 || data[data.length - 2] !== 255 || data[data.length - 1] !== 217) { done(null); return; }
+      try { blob = new window.Blob([bytes], { type: 'image/jpeg' }); url = objectURL(blob); }
+      catch (e) { done(null); return; }
+      validImage(m, url, function (ok) {
+        if (g !== epoch) return;
+        if (!ok) { done(null); return; }
+        persist(m, bytes, blob, url, g, function () {});
+        done(record(m, url));
+      });
+    });
+  }
+  // While Home is hidden: one long request the bridge answers when the Art photo is no longer <since>
+  // (or empty after 50 s). The new photo is downloaded and saved then, so Home shows it at once.
+  // done(record or null, ms until the next wait). cancel() ends it without calling done.
+  function watch(since, done) {
+    var g = epoch, base = 'http://' + host() + ':' + port();
+    if (!document.hidden) { done(null, 1000); return; }
+    request(base + '/art/wait.json?since=' + (/^[a-f0-9]{64}$/.test(since || '') ? since : 'none'), false, function (m, status) {
+      if (g !== epoch) return;
+      if (status === 204) { done(null, 0); return; }
+      // A bridge without this request (404) is asked again rarely; one that is down, after 30 s.
+      if (!metadata(m)) { done(null, status === 404 ? 600000 : 30000); return; }
+      if (current && current.revision === m.revision) { done(current, 0); return; }
+      photo(base, m, g, function (value) {
+        if (value) current = value;
+        done(value, value ? 0 : 30000);
+      });
+    }, 60000);
+  }
   function cancel() { epoch++; refreshing = false; requests.slice().forEach(function (xhr) { xhr.abort(); }); }
-  window.FrameArt = { load: load, refresh: refresh, cancel: cancel, current: function () { return current; }, preview: preview,
+  window.FrameArt = { load: load, refresh: refresh, watch: watch, cancel: cancel, current: function () { return current; }, preview: preview,
     savePreview: function (revision, src) { try { localStorage.setItem(PREVIEW_KEY, JSON.stringify({ revision: revision, src: src })); } catch (e) { /* Preview is optional. */ } },
     status: function () { return { available: !!current, refreshing: refreshing, error: error }; },
     lookFor: lookStyle,
