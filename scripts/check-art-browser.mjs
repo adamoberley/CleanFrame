@@ -97,16 +97,16 @@ try {
   // A photo whose frost was kept from an older build (no tagged preview yet) gets its preview made once.
   f.failed = false;
   await p.evaluate(() => localStorage.removeItem('cleanframe.art.preview.v2'));
-  await p.reload(); await p.waitForFunction(revision => ShoreQA.state().shown.artRevision === revision && !FrameArt.status().refreshing, first);
+  await p.reload(); await p.waitForFunction(revision => window.ShoreQA && window.FrameArt && ShoreQA.state().shown && ShoreQA.state().shown.artRevision === revision && !FrameArt.status().refreshing, first);
   check('A kept frost without a tagged preview gets its preview made once', await p.evaluate(revision => !!FrameArt.preview(revision) && !FrameArt.preview('b'.repeat(64)), first));
   // Cold start, saved photo still current: its softened preview covers the decode, then the photo itself.
-  await p.reload(); await p.waitForFunction(revision => ShoreQA.state().shown.artRevision === revision && !FrameArt.status().refreshing, first);
+  await p.reload(); await p.waitForFunction(revision => window.ShoreQA && window.FrameArt && ShoreQA.state().shown && ShoreQA.state().shown.artRevision === revision && !FrameArt.status().refreshing, first);
   await p.waitForTimeout(100);
   let log = await p.evaluate(() => __shownLog.filter(e => e !== 'null'));
   check('A cold start with the saved photo still current shows only that photo, its preview first', log.every(e => e === first || e === 'preview') && log[log.length - 1] === first && !(await p.evaluate(() => document.getElementById('photo').classList.contains('is-preview'))));
   // Cold start after the Art photo changed: the new photo comes up directly, never the saved old one or its preview.
   f.revision = second;
-  await p.reload(); await p.waitForFunction(revision => ShoreQA.state().shown.artRevision === revision && !FrameArt.status().refreshing, second);
+  await p.reload(); await p.waitForFunction(revision => window.ShoreQA && window.FrameArt && ShoreQA.state().shown && ShoreQA.state().shown.artRevision === revision && !FrameArt.status().refreshing, second);
   await p.waitForTimeout(100);
   log = await p.evaluate(() => __shownLog.filter(e => e !== 'null'));
   check('A cold start after the Art photo changed never shows the old photo or its preview', JSON.stringify(log) === JSON.stringify([second]), log);
