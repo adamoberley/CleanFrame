@@ -141,7 +141,7 @@ async function page(options = {}, setup) {
   if (setup) await setup(current);
   await current.route('http://127.0.0.1:8643/**', route => {
     const headers = { 'Access-Control-Allow-Origin': '*' };
-    if (route.request().url().endsWith('/current.json')) return route.fulfill({ headers, contentType: 'application/json', body: JSON.stringify({ revision: 'a'.repeat(64), contentId: 'MY_TEST', imageUrl: '/art/' + 'a'.repeat(64) + '/image.jpg', width: 64, height: 36 }) });
+    if (new URL(route.request().url()).pathname === '/current.json') return route.fulfill({ headers, contentType: 'application/json', body: JSON.stringify({ revision: 'a'.repeat(64), contentId: 'MY_TEST', imageUrl: '/art/' + 'a'.repeat(64) + '/image.jpg', width: 64, height: 36 }) });
     return route.fulfill({ headers, contentType: 'image/jpeg', body: artFixture });
   });
   await current.goto(preview.baseURL + '/home/', { waitUntil: options.settleNetwork === false ? 'domcontentloaded' : 'load' });

@@ -1351,9 +1351,15 @@
     else { im.onload = ready; im.onerror = function () { finish(false); }; }
   }
   function swapImg(k, im) { var old = IMG[k]; if (old === im) return; im.style.cssText = old.style.cssText; if (old.id) im.id = old.id; old.parentNode.replaceChild(im, old); IMG[k] = im; }
+  function showPreview(revision) {
+    var src = revision && window.FrameArt.preview(revision), im = IMG.photo;
+    if (!src || im.getAttribute('src')) return;
+    im.src = src; im.className = 'photo is-preview';
+  }
   function bundleKey() { return 'art|' + (artRecord ? artRecord.revision : 'none'); }
   /* The Art photo, the dock mat and the sheet backdrop swap together once every copy is ready. */
   function loadBundle(token, done, startup) {
+    if (startup && !artRecord && !document.hidden) { askFirst(); return; }
     window.FrameArt.load(function (cached) {
       if (token !== lookToken) return;
       if (!artRecord && cached) artRecord = cached;
@@ -1364,6 +1370,37 @@
         artRecord = fresh; build(fresh.url);
       });
     });
+    /* Cold start: ask the bridge which photo is current before showing any. The saved copy is shown only
+       when it still is (or the bridge is down or slow), so a photo changed since the last launch comes up
+       directly instead of after the old one. The softened preview of that same photo covers the decode. */
+    function askFirst() {
+      var settled = false, cached = null, wait = null;
+      // The saved copy loads alongside the bridge read; once it is in, the bridge gets 3 s more before the
+      // saved copy is shown (8 s with nothing saved, when the neutral placeholder would be all there is).
+      window.FrameArt.load(function (c) {
+        cached = c;
+        if (!settled) wait = setTimeout(function () { settle(null); }, c ? 3000 : 8000);
+      });
+      function settle(fresh) {
+        if (settled) return; settled = true; clearTimeout(wait);
+        if (token !== lookToken) return;
+        artRecord = fresh || cached || null;
+        showPreview(artRecord && artRecord.revision);
+        build(artRecord ? artRecord.url : ART_NEUTRAL);
+      }
+      // Counts as this launch's refresh: the one Home starts after the first install is skipped (5 s
+      // throttle), and a read cut off by Back in Visual is started again on returning Home.
+      artRefreshAt = Date.now(); artRefreshing = true;
+      window.FrameArt.refresh(function (fresh) {
+        artRefreshing = false;
+        if (!settled) { settle(fresh); return; }
+        // The saved copy went up while the bridge was slow: a newer photo follows as a background refresh.
+        if (!fresh || document.hidden || artRecord && artRecord.revision === fresh.revision) return;
+        artRecord = fresh;
+        if (top().id !== 'home' || S.pending) { artInstallCancelled = true; return; }
+        setLook({}, { transient: true });
+      }, function (m) { if (!settled && token === lookToken) showPreview(m.revision); });
+    }
     function build(artURL) {
       var imgs = { photo: makeImg('photo', artURL), bg: makeImg('sheet-bg', artURL), mat: makeImg('mat-img', artURL) }, keys = Object.keys(imgs), left = keys.length, allOk = true;
       var key = bundleKey(), revision = artRecord ? artRecord.revision : null;
@@ -1390,7 +1427,7 @@
        where canvas filters are missing, a halving-then-doubling ladder approximates the blur.
      - preview: a small unblurred JPEG kept in localStorage so the next launch shows the photo
        at once instead of the stage colour while the 4K image decodes. */
-  var frostFor = '', frostURL = '', PREVIEW_KEY = 'cleanframe.art.preview.v1', FROST_KEY = 'cleanframe.art.frost.v1';
+  var frostFor = '', frostURL = '', FROST_KEY = 'cleanframe.art.frost.v1';
   function canvas(w, h) { var c = document.createElement('canvas'); c.width = w; c.height = h; return c; }
   function frostSheet() {
     var im = IMG.photo, src = im && im.src, base, out, ctx, w, h, step, next;
@@ -1400,10 +1437,16 @@
       frostFor = rev; frostURL = '';
       // Same Art photo as last launch: reuse the stored frost; no 4K draw or encode on startup.
       try { saved = JSON.parse(localStorage.getItem(FROST_KEY)); } catch (e) { saved = null; }
-      if (saved && saved.rev === rev && /^data:image\/jpeg;base64,/.test(saved.frost || '')) frostURL = saved.frost;
-      else try {
+      if (saved && saved.rev === rev && /^data:image\/jpeg;base64,/.test(saved.frost || '')) {
+        frostURL = saved.frost;
+        // A frost kept from a build that saved no tagged preview: make the preview once (one small draw).
+        if (S.shown && S.shown.artRevision && !window.FrameArt.preview(S.shown.artRevision)) try {
+          base = canvas(480, 270); base.getContext('2d').drawImage(im, 0, 0, 480, 270);
+          window.FrameArt.savePreview(S.shown.artRevision, base.toDataURL('image/jpeg', 0.72));
+        } catch (e) { /* Preview is optional. */ }
+      } else try {
         base = canvas(480, 270); base.getContext('2d').drawImage(im, 0, 0, 480, 270);
-        try { localStorage.setItem(PREVIEW_KEY, base.toDataURL('image/jpeg', 0.72)); } catch (e) { /* Preview is optional. */ }
+        if (S.shown && S.shown.artRevision) window.FrameArt.savePreview(S.shown.artRevision, base.toDataURL('image/jpeg', 0.72));
         out = canvas(480, 270); ctx = out.getContext('2d');
         if ('filter' in ctx) {
           // Overscan so the blur does not pull dark edges in from outside the photo.

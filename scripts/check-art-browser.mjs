@@ -31,17 +31,28 @@ async function fresh(options = {}) {
     window.__visibility = value => { window.__hidden = value; document.dispatchEvent(new Event('visibilitychange')); };
     const save = Storage.prototype.setItem;
     window.__failWrites = false;
+    // Every photo Home puts up, in order: the shown revision, or 'preview' while a softened preview is up.
+    window.__shownLog = [];
+    (function watch() {
+      try {
+        const st = window.ShoreQA && ShoreQA.state(), photo = document.getElementById('photo'), rev = st && st.shown && st.shown.artRevision || null;
+        const entry = photo && /\bis-preview\b/.test(photo.className) ? 'preview' : String(rev), log = window.__shownLog;
+        if (log[log.length - 1] !== entry) log.push(entry);
+      } catch (e) { /* Not started yet. */ }
+      requestAnimationFrame(watch);
+    })();
     Storage.prototype.setItem = function (key, value) { if (__failWrites && key === 'cleanframe.home.v1') throw Error('Synthetic storage failure'); return save.call(this, key, value); };
   }, { seed: options.seed || seed, hidden: options.hidden });
   let heldReady;
   const whenHeld = new Promise(resolve => { heldReady = resolve; });
   const fixture = { whenHeld, calls: [], revision: first, failed: false, corrupt: !!options.corrupt, held: [], hold: false };
   await p.route('http://127.0.0.1:8643/**', async route => {
-    const url = new URL(route.request().url()); fixture.calls.push(url.pathname);
+    const url = new URL(route.request().url()); fixture.calls.push(url.pathname + url.search);
     if (fixture.hold && url.pathname === '/current.json') { fixture.held.push(route); heldReady(); return; }
     if (fixture.failed) { await route.abort('failed'); return; }
     const headers = { 'Access-Control-Allow-Origin': '*' };
-    if (url.pathname === '/current.json') await route.fulfill({ headers, contentType: 'application/json', body: JSON.stringify({ revision: fixture.revision, contentId: 'MY_TEST', imageUrl: '/art/' + fixture.revision + '/image.jpg', ...size, look: { brightness: 5, colorTemperature: 5 } }) });
+    // ?quick=1 names the photo only; the full read also carries Art's picture settings.
+    if (url.pathname === '/current.json') await route.fulfill({ headers, contentType: 'application/json', body: JSON.stringify({ revision: fixture.revision, contentId: 'MY_TEST', imageUrl: '/art/' + fixture.revision + '/image.jpg', ...size, ...(url.search ? {} : { look: { brightness: 5, colorTemperature: 5 } }) }) });
     else await route.fulfill({ headers, contentType: 'image/jpeg', body: fixture.corrupt ? Buffer.from('corrupted JPEG') : jpeg });
   });
   await p.goto(preview.baseURL + '/home/'); await ready(); return fixture;
@@ -51,11 +62,11 @@ try {
   preview = await openPreview();
   const f = await fresh({ seed: { ...seed, look: { ...seed.look, bg: 'dark' } } });
   await p.waitForFunction(revision => ShoreQA.state().shown.artRevision === revision, first);
-  check('A stored Dark background starts on Art Mode with one safe metadata/JPEG pair', f.calls.length === 2 && (await state()).committed.bg === 'photo' && (await state()).shown.bg === 'photo' && (await state()).committed.source === 'art' && (await state()).shown.artRevision === first);
+  check('A stored Dark background starts on Art Mode with one quick and one full metadata read and one JPEG', JSON.stringify(f.calls.slice().sort()) === JSON.stringify(['/art/' + first + '/image.jpg', '/current.json', '/current.json?quick=1']) && (await state()).committed.bg === 'photo' && (await state()).shown.bg === 'photo' && (await state()).committed.source === 'art' && (await state()).shown.artRevision === first);
   check('Art Mode startup writes no preference', (await state()).writes === 0);
   await group();
   await p.evaluate(() => ShoreQA.nav('down', 'down', 'down', 'right', 'left', 'up', 'down'));
-  check('Visual remote navigation performs no further bridge networking', f.calls.length === 2);
+  check('Visual remote navigation performs no further bridge networking', f.calls.length === 3);
   check('Art installs the bridge photo as the background', new Set(await artImages()).size === 1 && (await artImages())[0].startsWith('blob:'));
   check('The dock mat is hidden until it can use the frosted Art copy', await p.evaluate(() => document.getElementById('stage').classList.contains('source-art') && (() => { const m = document.getElementById('matImg'); return getComputedStyle(m).visibility === 'hidden' || m.classList.contains('is-frost') && /^data:image\/jpeg/.test(m.src); })()));
   await p.screenshot({ path: out + 'art-background-public.png' });
@@ -83,6 +94,23 @@ try {
   check('IndexedDB last-good JPEG renders immediately after reload while offline', (await state()).shown.artRevision === first && (await state()).committed.source === 'art');
   await p.waitForFunction(() => !FrameArt.status().refreshing);
   check('Failed async refresh keeps the cached appearance', (await state()).shown.artRevision === first);
+  // A photo whose frost was kept from an older build (no tagged preview yet) gets its preview made once.
+  f.failed = false;
+  await p.evaluate(() => localStorage.removeItem('cleanframe.art.preview.v2'));
+  await p.reload(); await p.waitForFunction(revision => ShoreQA.state().shown.artRevision === revision && !FrameArt.status().refreshing, first);
+  check('A kept frost without a tagged preview gets its preview made once', await p.evaluate(revision => !!FrameArt.preview(revision) && !FrameArt.preview('b'.repeat(64)), first));
+  // Cold start, saved photo still current: its softened preview covers the decode, then the photo itself.
+  await p.reload(); await p.waitForFunction(revision => ShoreQA.state().shown.artRevision === revision && !FrameArt.status().refreshing, first);
+  await p.waitForTimeout(100);
+  let log = await p.evaluate(() => __shownLog.filter(e => e !== 'null'));
+  check('A cold start with the saved photo still current shows only that photo, its preview first', log.every(e => e === first || e === 'preview') && log[log.length - 1] === first && !(await p.evaluate(() => document.getElementById('photo').classList.contains('is-preview'))));
+  // Cold start after the Art photo changed: the new photo comes up directly, never the saved old one or its preview.
+  f.revision = second;
+  await p.reload(); await p.waitForFunction(revision => ShoreQA.state().shown.artRevision === revision && !FrameArt.status().refreshing, second);
+  await p.waitForTimeout(100);
+  log = await p.evaluate(() => __shownLog.filter(e => e !== 'null'));
+  check('A cold start after the Art photo changed never shows the old photo or its preview', JSON.stringify(log) === JSON.stringify([second]), log);
+  f.revision = first;
   const bad = await fresh({ corrupt: true });
   await p.waitForFunction(() => !ShoreQA.state().pending && !FrameArt.status().refreshing);
   check('A corrupt JPEG at startup installs no Art bundle and writes no preference', bad.calls.includes('/art/' + first + '/image.jpg') && !(await state()).shown.artRevision && (await state()).writes === 0 && !(await artImages()).some(src => src.startsWith('blob:')));
@@ -91,7 +119,7 @@ try {
   check('Hidden cold start performs no bridge request and keeps the saved source', hidden.calls.length === 0 && (await state()).committed.source === 'art' && !('wall' in (await state()).committed) && (await state()).shown.artRevision === null);
   await p.evaluate(() => __visibility(false));
   await p.waitForFunction(revision => ShoreQA.state().shown.artRevision === revision, first);
-  check('Visible Home refreshes the cold placeholder without a preference write', hidden.calls.length === 2 && (await state()).writes === 0);
+  check('Visible Home refreshes the cold placeholder without a preference write', hidden.calls.length === 3 && (await state()).writes === 0);
   hidden.revision = second;
   await p.waitForTimeout(5100); // Exercise lifecycle throttling, never a production polling loop.
   await p.evaluate(() => { __visibility(true); __visibility(false); });

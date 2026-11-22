@@ -17,7 +17,7 @@ This is a personal fork of [nthnclrk/CleanFrame](https://github.com/nthnclrk/Cle
 
 ## What it does
 
-- **Background:** always the current Art Mode photo, shown with a calibrated Art look (`app/art-mode.js`). The look follows Art Mode's brightness and colour temperature as reported by the bridge. Sheets and the dock sit on a frosted copy of the photo. The app makes this copy once per photo at 480×270 with a canvas blur and keeps it between launches. At launch, a small preview of the photo appears straight away.
+- **Background:** always the current Art Mode photo, shown with a calibrated Art look (`app/art-mode.js`). The look follows Art Mode's brightness and colour temperature as reported by the bridge. Sheets and the dock sit on a frosted copy of the photo. The app makes this copy once per photo at 480×270 with a canvas blur and keeps it between launches. At launch, Home checks which photo is current first, so an older photo never flashes up; a softened preview of the right photo covers the decode.
 - **Typeface:** the TV's own system font, One UI Sans, with a standard sans-serif fallback in browsers (`FONT_STACK` in `app/main.js`). No font files are shipped.
 - **Home:** up to 24 apps in a List or Dock layout. Focus is either a Glass pill with a spring or Text only. The clock can show the weather. HDMI entries on Home can appear only while their input is connected, or always.
 - **All apps:** Live TV and HDMI 1–4 come first, followed by the installed consumer apps in alphabetical order.
