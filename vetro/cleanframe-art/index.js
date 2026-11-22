@@ -226,6 +226,9 @@ function moduleFactory(ctx) {
   var reuseMs = ctx.reuseMs || 1500, lookMaxAge = ctx.lookMaxAgeMs || 3000, lookWait = ctx.lookWaitMs || 800;
   var lightsInterval = ctx.lightsIntervalMs || 1500, ringInterval = ctx.ringIntervalMs || 3000;
   var inflight = null, starting = null, rejectStart = null, generation = 0, counter = 0, lastRead = 0, lastError = false;
+  // Art-change watch (see watch()). prefFile, waitMs and watchMs are overridable only by the offline harness.
+  var waiters = [], watchTimer = null, prefStamp = null, watchFailedAt = 0, lastWaitAt = 0;
+  var prefFile = ctx.prefPath || PREF, waitMs = ctx.waitMs || 50000, watchMs = ctx.watchMs || 2000;
   function active(g) { if (!running || g !== generation) invalid(); }
   function execute(cmd) {
     return Promise.resolve().then(function () { return ctx.execute(cmd, 4000); }).then(function (r) {
@@ -240,9 +243,9 @@ function moduleFactory(ctx) {
       return parsePreference(buffer(value, 'base64'));
     });
   }
-  function refresh() {
+  function refresh(force) {
     if (inflight) return inflight;
-    if (current && Date.now() - lastRead < reuseMs) return Promise.resolve(current);
+    if (!force && current && Date.now() - lastRead < reuseMs) return Promise.resolve(current);
     var g = generation, tmp = path.join(dir, 'copy-' + process.pid + '-' + (++counter) + '.tmp');
     inflight = readPreference().then(function (meta) {
       active(g);
@@ -309,6 +312,42 @@ function moduleFactory(ctx) {
       var timer = setTimeout(resolve, lookWait);
       pending.then(function () { clearTimeout(timer); resolve(); });
     });
+  }
+  // /art/wait.json?since=<revision> answers as soon as the current photo is not <since> (200, as
+  // current.json?quick=1), or with 204 after 50 s, so a hidden CleanFrame can fetch a new photo
+  // before Home is pressed. While anyone waits, Art's preference file is only stat()ed every 2 s
+  // (this process may read Art's files); just a changed size or time reads it as root.
+  function stamp() { try { var st = fs.statSync(prefFile); return st.size + ':' + st.mtime.getTime(); } catch (e) { return null; } }
+  function metaJSON(meta) { return JSON.stringify({ revision: meta.revision, contentId: meta.contentId, imageUrl: meta.imageUrl, width: meta.width, height: meta.height }); }
+  function endWaiter(w, meta) {
+    var i = waiters.indexOf(w);
+    if (i < 0) return;
+    waiters.splice(i, 1); clearTimeout(w.timer);
+    if (!waiters.length) { clearInterval(watchTimer); watchTimer = null; }
+    if (w.closed) return;
+    if (meta) { w.res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); w.res.end(metaJSON(meta)); }
+    else { w.res.writeHead(204, { 'Cache-Control': 'no-store' }); w.res.end(); }
+  }
+  function notify(meta) { waiters.slice().forEach(function (w) { if (w.since !== meta.revision) endWaiter(w, meta); }); }
+  function check() {
+    var s, g = generation;
+    if (!running || inflight || !waiters.length) return;
+    s = stamp();
+    // Unchanged file: the photo is still the one last read. Unreadable: re-read as root at most every 10 s.
+    if (current && (s !== null ? s === prefStamp : Date.now() - lastRead < 10000)) { notify(current); return; }
+    if (Date.now() - watchFailedAt < 10000) return;
+    refresh(true).then(function (meta) { if (g === generation) { prefStamp = s; notify(meta); } }, function () { watchFailedAt = Date.now(); });
+  }
+  function watch(req, res, since) {
+    var w = { res: res, since: since, closed: false };
+    // One hidden CleanFrame waits at a time; a newer wait replaces an older one.
+    while (waiters.length >= 2) endWaiter(waiters[0], null);
+    req.socket.setTimeout(waitMs + 10000);
+    w.timer = setTimeout(function () { endWaiter(w, null); }, waitMs);
+    res.once('close', function () { w.closed = true; endWaiter(w, null); });
+    waiters.push(w); lastWaitAt = Date.now();
+    if (!watchTimer) watchTimer = setInterval(check, watchMs);
+    check();
   }
   // Home's Lights button: fire the owner's Vetro rule, which publishes MQTT for Home Assistant.
   // A fixed trigger only; the request body is ignored, so callers cannot choose rules or topics.
@@ -502,7 +541,7 @@ function moduleFactory(ctx) {
     socket.on('close', retry);
   }
   function handler(req, res) {
-    var origin = req.headers.origin, match, allow, quick, closed = false, released = false;
+    var origin = req.headers.origin, match, allow, quick, wait, closed = false, released = false;
     // Some Frame web runtimes block loopback. When bound to the TV's own
     // interface, accept only connections originating from that exact address.
     if (!localClient(address, req.socket.remoteAddress)) { res.writeHead(403); res.end(); return; }
@@ -512,7 +551,8 @@ function moduleFactory(ctx) {
     match = /^\/art\/([a-f0-9]{64})\/image\.jpg$/.exec(req.url);
     // ?quick=1 names the photo without waiting for Art's picture settings (and so carries no look).
     quick = req.url === '/current.json?quick=1';
-    allow = req.url === '/lights' ? 'POST' : req.url === '/current.json' || quick || match ? 'GET' : null;
+    wait = /^\/art\/wait\.json\?since=([a-f0-9]{64}|none)$/.exec(req.url);
+    allow = req.url === '/lights' ? 'POST' : req.url === '/current.json' || quick || wait || match ? 'GET' : null;
     // CORS preflight carries no key; it only says which method and header the real request may use.
     if (req.method === 'OPTIONS' && allow) {
       res.writeHead(204, { 'Access-Control-Allow-Methods': allow, 'Access-Control-Allow-Headers': 'X-CleanFrame-Key', 'Access-Control-Max-Age': '600' }); res.end(); return;
@@ -526,6 +566,7 @@ function moduleFactory(ctx) {
     pendingHTTP++;
     function release() { if (released) return; released = true; pendingHTTP--; }
     res.once('finish', release); res.once('close', function () { closed = true; release(); });
+    if (wait) { watch(req, res, wait[1]); return; }
     if (req.url === '/current.json' || quick) {
       // A quick read still starts the settings read, so the full request that follows finds it under way.
       var lookReady = quick ? (settings(), Promise.resolve()) : freshLook();
@@ -572,6 +613,7 @@ function moduleFactory(ctx) {
     return starting;
   }
   function stop() {
+    waiters.slice().forEach(function (w) { endWaiter(w, null); }); prefStamp = null; watchFailedAt = 0;
     running = false; generation++; current = null; revisions = []; lastRead = 0; lastError = false; lookError = null; look = null; lookAt = 0; lookTried = 0; lookRead = null; lightsBusy = false;
     mqttStop(); homeStop();
     var old = server; server = null; starting = null;
@@ -580,10 +622,10 @@ function moduleFactory(ctx) {
     return new Promise(function (resolve) { if (old) old.close(resolve); else resolve(); });
   }
   return { start: start, stop: stop,
-    status: function () { return { running: running, keyed: !!keyDigest, available: !!current, refreshing: !!inflight, error: lastError ? 'Art unavailable' : null, look: look, lookError: lookError, doorbell: { listening: pipState.connected, configured: !!pipConfig().stream, error: pipState.installError || pipState.lastError }, home: { configured: !!homeConfig(), running: homeState.running, error: homeState.error } }; },
+    status: function () { return { running: running, keyed: !!keyDigest, available: !!current, refreshing: !!inflight, error: lastError ? 'Art unavailable' : null, look: look, lookError: lookError, doorbell: { listening: pipState.connected, configured: !!pipConfig().stream, error: pipState.installError || pipState.lastError }, home: { configured: !!homeConfig(), running: homeState.running, error: homeState.error }, watch: { waiting: waiters.length, lastWaitAt: lastWaitAt || null } }; },
     route: function (req, res) { res.writeHead(404); res.end(); },
     // Offline harness hooks; Vetro never calls these.
-    _test: { unpackPip: unpackPip, ring: ring, homeStart: homeStart, homeRetrying: function () { return !!homeTimer; }, pipDir: pipDir, pipHashes: function () { return pipHashes; }, mqttTimers: function () { return { retry: !!mqTimer, ping: !!mqPing, socket: !!mq }; } }
+    _test: { unpackPip: unpackPip, ring: ring, homeStart: homeStart, homeRetrying: function () { return !!homeTimer; }, waiting: function () { return { waiters: waiters.length, watching: !!watchTimer }; }, pipDir: pipDir, pipHashes: function () { return pipHashes; }, mqttTimers: function () { return { retry: !!mqTimer, ping: !!mqPing, socket: !!mq }; } }
   };
 }
 module.exports = moduleFactory;

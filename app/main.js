@@ -1554,6 +1554,33 @@
     });
   }
 
+  /* While Home is hidden (another app, Art Mode), a new Art photo is fetched as soon as the bridge
+     reports it and installed out of sight, so pressing Home shows it straight away. One request
+     waits at a time; it stops when Home is shown. */
+  var artWatchTimer = 0, artWatchOn = false, artWatchFails = 0;
+  function watchArt() {
+    clearTimeout(artWatchTimer); artWatchTimer = 0;
+    if (!document.hidden || artWatchOn) return;
+    artWatchOn = true;
+    window.FrameArt.watch(artRecord && artRecord.revision, function (fresh, retryMs) {
+      artWatchOn = false;
+      if (!document.hidden) return;
+      if (fresh && !(artRecord && artRecord.revision === fresh.revision)) {
+        artRecord = fresh;
+        if (top().id !== 'home' || S.pending) artInstallCancelled = true;
+        else setLook({}, { transient: true });
+      }
+      // Failures back off (30 s, 1, 2, 4 ... up to 10 min), so a bridge that is down or a photo that will
+      // not load while hidden is never fetched again and again.
+      artWatchFails = retryMs ? artWatchFails + 1 : 0;
+      artWatchTimer = setTimeout(watchArt, retryMs && Math.min(retryMs * Math.pow(2, artWatchFails - 1), 600000));
+    });
+  }
+  function unwatchArt() {
+    clearTimeout(artWatchTimer); artWatchTimer = 0;
+    if (artWatchOn) { artWatchOn = false; window.FrameArt.cancel(); }
+  }
+
   /* ---------- Lifecycle and remote input ---------- */
   var clockTimer = 0;
   function updateClock() {
@@ -1666,8 +1693,10 @@
       if (S.pending) cancelLook();
       else cancelArt();
       FrameDevice.cancelSource(); syncHomeSources(); clearTimeout(clockTimer);
-      if (top().id === 'cameras') { CAMERAS.stop(); pop(); render(); } }
+      if (top().id === 'cameras') { CAMERAS.stop(); pop(); render(); }
+      watchArt(); }
     else {
+      unwatchArt();
       release();
       if (!S.pending && (!committedBundle || S.bundleKey !== bundleKey())) setLook({}, { transient: true, startup: true });
       after(); updateClock(); focusStage(); refreshArt();

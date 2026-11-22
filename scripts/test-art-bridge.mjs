@@ -120,6 +120,54 @@ test('current.json?quick=1 names the photo at once, carries no look, and starts 
     for (const path of ['/current.json?quick=0', '/current.json?quick=1&x=1', '/current.json?']) assert.equal((await get(port, path)).status, 404, path);
   }, { lookWaitMs: 150 });
 });
+test('art/wait.json answers when the Art photo changes, stats the file in between and times out with 204', async () => {
+  const prefDir = mkdtempSync(join(tmpdir(), 'cleanframe-pref-')), prefPath = join(prefDir, 'pref');
+  writeFileSync(prefPath, 'a');
+  try {
+    await harness(async ({ bridge, port, calls, setInput }) => {
+      const reads = () => calls.filter(c => c.startsWith('head -c 65537 ')).length;
+      // Nothing known yet: answers at once with the current photo, like current.json?quick=1.
+      const first = await get(port, '/art/wait.json?since=none');
+      assert.equal(first.status, 200);
+      const meta = JSON.parse(first.body);
+      assert.deepEqual(Object.keys(meta).sort(), ['contentId', 'height', 'imageUrl', 'revision', 'width']);
+      // Same photo: held. While the file is unchanged no root read runs, only stat().
+      const before = reads(), held = get(port, '/art/wait.json?since=' + meta.revision);
+      await sleep(250);
+      assert.deepEqual(bridge._test.waiting(), { waiters: 1, watching: true });
+      assert.equal(bridge.status().watch.waiting, 1); assert.ok(Date.now() - bridge.status().watch.lastWaitAt < 1000);
+      assert.equal(reads(), before); // The first wait already learned the file's stamp.
+      // The photo changes: the next stat sees it and the wait answers with the new revision.
+      setInput(pref(content('MY_NEXT'))); writeFileSync(prefPath, 'bb');
+      const changed = await held;
+      assert.equal(changed.status, 200);
+      const next = JSON.parse(changed.body);
+      assert.equal(next.contentId, 'MY_NEXT'); assert.notEqual(next.revision, meta.revision);
+      assert.equal((await get(port, next.imageUrl)).status, 200);
+      assert.deepEqual(bridge._test.waiting(), { waiters: 0, watching: false });
+      // Still the same photo after the wait time: 204, and the stat loop stops.
+      const quiet = await get(port, '/art/wait.json?since=' + next.revision);
+      assert.equal(quiet.status, 204);
+      assert.deepEqual(bridge._test.waiting(), { waiters: 0, watching: false });
+      // A third wait ends the oldest with 204; the changed file answers the others, even inside the
+      // window where current.json would reuse its last read.
+      const a = get(port, '/art/wait.json?since=' + next.revision), b = get(port, '/art/wait.json?since=' + next.revision);
+      await sleep(30);
+      const c = get(port, '/art/wait.json?since=' + next.revision);
+      assert.equal((await a).status, 204);
+      setInput(pref(content('MY_THIRD'))); writeFileSync(prefPath, 'ccc');
+      assert.equal(JSON.parse((await b).body).contentId, 'MY_THIRD'); assert.equal(JSON.parse((await c).body).contentId, 'MY_THIRD');
+      // Preflight allows it; malformed waits are not served.
+      assert.equal((await get(port, '/art/wait.json?since=none', 'null', 'OPTIONS')).status, 204);
+      for (const path of ['/art/wait.json', '/art/wait.json?since=abc', '/art/wait.json?since=none&x=1']) assert.equal((await get(port, path)).status, 404, path);
+      // stop() ends a wait in progress.
+      const last = get(port, '/art/wait.json?since=' + JSON.parse((await get(port, '/current.json?quick=1')).body).revision).catch(() => ({ status: 'closed' }));
+      await sleep(30); await bridge.stop();
+      assert.ok([204, 'closed'].includes((await last).status));
+      assert.deepEqual(bridge._test.waiting(), { waiters: 0, watching: false });
+    }, { prefPath, waitMs: 400, watchMs: 40, reuseMs: 5000 });
+  } finally { rmSync(prefDir, { recursive: true, force: true }); }
+});
 test('a changed Art look shows on the first current.json when the read answers within 800 ms', async () => {
   await harness(async ({ port, setSettings }) => {
     let value = { brightness: 5, colorTemperature: 3 }, reads = 0;

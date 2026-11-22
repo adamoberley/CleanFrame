@@ -8,7 +8,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const jpeg = readFileSync(root + 'scripts/fixtures/art-test.jpg');
 const size = require('../vetro/cleanframe-art/index.js').jpegSize(jpeg);
-const first = createHash('sha256').update('fixture A').digest('hex'), second = createHash('sha256').update('fixture B').digest('hex'), third = createHash('sha256').update('fixture C').digest('hex'), fourth = createHash('sha256').update('fixture D').digest('hex');
+const first = createHash('sha256').update('fixture A').digest('hex'), second = createHash('sha256').update('fixture B').digest('hex'), third = createHash('sha256').update('fixture C').digest('hex'), fourth = createHash('sha256').update('fixture D').digest('hex'), fifth = createHash('sha256').update('fixture E').digest('hex');
 // Includes retired fields (wall, material, font, mode) that migration accepts and drops.
 const seed = { look: { bg: 'photo', wall: 'misty', source: 'art', layout: 'dock', focus: 'glass', material: 'soft', font: 'inter', apps: 'both', controls: 'both' }, mode: '15' };
 const out = root + '.local/qa/'; mkdirSync(out, { recursive: true });
@@ -45,10 +45,12 @@ async function fresh(options = {}) {
   }, { seed: options.seed || seed, hidden: options.hidden });
   let heldReady;
   const whenHeld = new Promise(resolve => { heldReady = resolve; });
-  const fixture = { whenHeld, calls: [], revision: first, failed: false, corrupt: !!options.corrupt, held: [], hold: false };
+  const fixture = { whenHeld, calls: [], revision: first, failed: false, corrupt: !!options.corrupt, held: [], hold: false, waits: [] };
   await p.route('http://127.0.0.1:8643/**', async route => {
     const url = new URL(route.request().url()); fixture.calls.push(url.pathname + url.search);
     if (fixture.hold && url.pathname === '/current.json') { fixture.held.push(route); heldReady(); return; }
+    // The hidden Art watch: held like the real long wait until the check answers it.
+    if (url.pathname === '/art/wait.json') { fixture.waits.push(route); return; }
     if (fixture.failed) { await route.abort('failed'); return; }
     const headers = { 'Access-Control-Allow-Origin': '*' };
     // ?quick=1 names the photo only; the full read also carries Art's picture settings.
@@ -153,6 +155,23 @@ try {
   await p.waitForFunction(revision => ShoreQA.state().view === 'home' && ShoreQA.state().shown.artRevision === revision, fourth);
   check('An Art read cancelled in Visual starts again on returning Home', hidden.calls.filter(c => c === '/current.json').length === readsBefore + 1);
   for (const route of hidden.held.splice(0)) await route.abort().catch(() => {});
+  // Hidden (another app or Art Mode): the Art photo changes, the bridge answers the wait, and the new
+  // photo is installed out of sight, so Home comes back showing it with nothing old first.
+  for (const route of hidden.waits.splice(0)) await route.abort().catch(() => {}); // Waits from earlier hides, already ended by showing Home.
+  const waitsBefore = hidden.calls.filter(c => c.startsWith('/art/wait.json')).length;
+  await p.evaluate(() => __visibility(true));
+  await p.waitForTimeout(100);
+  check('Hiding Home sends one Art wait for the photo it shows', hidden.waits.length === 1 && hidden.calls.filter(c => c.startsWith('/art/wait.json')).length === waitsBefore + 1 && hidden.calls[hidden.calls.length - 1] === '/art/wait.json?since=' + fourth);
+  hidden.revision = fifth;
+  await hidden.waits.shift().fulfill({ headers: { 'Access-Control-Allow-Origin': '*' }, contentType: 'application/json', body: JSON.stringify({ revision: fifth, contentId: 'MY_TEST', imageUrl: '/art/' + fifth + '/image.jpg', ...size }) });
+  await p.waitForFunction(revision => ShoreQA.state().shown.artRevision === revision && !ShoreQA.state().pending, fifth);
+  await p.waitForTimeout(100);
+  check('A photo changed while hidden is installed before Home is shown, and the watch waits again', hidden.calls.includes('/art/' + fifth + '/image.jpg') && hidden.waits.length === 1 && hidden.calls[hidden.calls.length - 1] === '/art/wait.json?since=' + fifth);
+  await p.evaluate(() => { __shownLog.length = 0; __visibility(false); });
+  await p.waitForTimeout(300);
+  const shownBack = await p.evaluate(() => __shownLog.filter(e => e !== 'null'));
+  check('Home shown again shows only the new photo, downloaded once', JSON.stringify(shownBack) === JSON.stringify([fifth]) && hidden.calls.filter(c => c === '/art/' + fifth + '/image.jpg').length === 1, shownBack);
+  for (const route of hidden.waits.splice(0)) await route.abort().catch(() => {});
   await fresh({ seed: {} });
   await p.waitForFunction(() => !!ShoreQA.state().shown.artRevision);
   const defaults = (await state()).dock;
