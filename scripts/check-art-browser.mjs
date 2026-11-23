@@ -7,7 +7,7 @@ import { openPreview, root } from './browser.mjs';
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const jpeg = readFileSync(root + 'scripts/fixtures/art-test.jpg');
-const size = require('../vetro/cleanframe-art/index.js').jpegSize(jpeg);
+const jpegSize = require('../vetro/cleanframe-art/index.js').jpegSize, size = jpegSize(jpeg);
 const first = createHash('sha256').update('fixture A').digest('hex'), second = createHash('sha256').update('fixture B').digest('hex'), third = createHash('sha256').update('fixture C').digest('hex'), fourth = createHash('sha256').update('fixture D').digest('hex'), fifth = createHash('sha256').update('fixture E').digest('hex');
 // Includes retired fields (wall, material, font, mode) that migration accepts and drops, and the retired Dock layout, which loads as List.
 const seed = { look: { bg: 'photo', wall: 'misty', source: 'art', layout: 'dock', focus: 'glass', material: 'soft', font: 'inter', apps: 'both', controls: 'both' }, mode: '15' };
@@ -45,6 +45,7 @@ async function fresh(options = {}) {
   }, { seed: options.seed || seed, hidden: options.hidden });
   let heldReady;
   const whenHeld = new Promise(resolve => { heldReady = resolve; });
+  const image = options.image || jpeg, imageSize = jpegSize(image);
   const fixture = { whenHeld, calls: [], revision: first, failed: false, corrupt: !!options.corrupt, held: [], hold: false, waits: [] };
   await p.route('http://127.0.0.1:8643/**', async route => {
     const url = new URL(route.request().url()); fixture.calls.push(url.pathname + url.search);
@@ -54,8 +55,8 @@ async function fresh(options = {}) {
     if (fixture.failed) { await route.abort('failed'); return; }
     const headers = { 'Access-Control-Allow-Origin': '*' };
     // ?quick=1 names the photo only; the full read also carries Art's picture settings.
-    if (url.pathname === '/current.json') await route.fulfill({ headers, contentType: 'application/json', body: JSON.stringify({ revision: fixture.revision, contentId: 'MY_TEST', imageUrl: '/art/' + fixture.revision + '/image.jpg', ...size, ...(url.search ? {} : { look: { brightness: 5, colorTemperature: 5 } }) }) });
-    else await route.fulfill({ headers, contentType: 'image/jpeg', body: fixture.corrupt ? Buffer.from('corrupted JPEG') : jpeg });
+    if (url.pathname === '/current.json') await route.fulfill({ headers, contentType: 'application/json', body: JSON.stringify({ revision: fixture.revision, contentId: 'MY_TEST', imageUrl: '/art/' + fixture.revision + '/image.jpg', ...imageSize, ...(url.search ? {} : { look: { brightness: 5, colorTemperature: 5 } }) }) });
+    else await route.fulfill({ headers, contentType: 'image/jpeg', body: fixture.corrupt ? Buffer.from('corrupted JPEG') : image });
   });
   await p.goto(preview.baseURL + '/home/'); await ready(); return fixture;
 }
@@ -191,6 +192,16 @@ try {
   // The list mask is opaque from 96px to 976px of its 1040px box.
   check('List shows seven app names before the lower fade', rows.length === 9 && rows.slice(0, 7).every(r => r.top >= 96 && r.bottom <= 978) && rows[7].top > 976);
   await p.screenshot({ path: out + 'home-list-seven-public.png' });
+  // Art Mode keeps 4K photos; Home keeps a 1920x1080 copy (about a quarter of the decoded memory).
+  const big = Buffer.from(await p.evaluate(() => new Promise(resolve => {
+    const c = document.createElement('canvas'), x = c.getContext('2d'), g = x.createLinearGradient(0, 0, 3840, 2160);
+    c.width = 3840; c.height = 2160; g.addColorStop(0, '#345'); g.addColorStop(1, '#c96'); x.fillStyle = g; x.fillRect(0, 0, 3840, 2160);
+    c.toBlob(b => b.arrayBuffer().then(a => resolve(Array.from(new Uint8Array(a)))), 'image/jpeg', 0.9);
+  })));
+  const large = await fresh({ image: big });
+  await p.waitForFunction(revision => ShoreQA.state().shown.artRevision === revision && document.getElementById('photo').naturalWidth > 0, first);
+  const kept = await p.evaluate(() => { const im = document.getElementById('photo'); return [im.naturalWidth, im.naturalHeight, FrameArt.current().width, FrameArt.current().height]; });
+  check('A 4K Art photo is shown and kept at 1920x1080, downloaded once', JSON.stringify(kept) === '[1920,1080,1920,1080]' && large.calls.filter(c => c === '/art/' + first + '/image.jpg').length === 1, kept);
   check('Art browser run has no uncaught page errors', pageErrors.length === 0);
   console.log(checks.length + ' Art browser checks passed; screenshots in .local/qa/');
 } finally { if (p) await p.close(); if (preview) await preview.close(); }

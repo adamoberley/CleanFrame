@@ -5,9 +5,9 @@ import vm from 'node:vm';
 import { readFileSync } from 'node:fs';
 const source = readFileSync(new URL('../app/art-mode.js', import.meta.url), 'utf8');
 const A = 'a'.repeat(64), B = 'b'.repeat(64), C = 'c'.repeat(64), META = 'cleanframe.art.cache.v1';
-const meta = revision => ({ revision, contentId: 'MY_TEST', imageUrl: '/art/' + revision + '/image.jpg', width: 1920, height: 1080 });
+const meta = (revision, width = 1920, height = 1080) => ({ revision, contentId: 'MY_TEST', imageUrl: '/art/' + revision + '/image.jpg', width, height });
 const jpeg = new Uint8Array([255,216,0,0,0,0,0,0,0,0,255,217]);
-function harness({ files = new Map(), storage = new Map(), failMove = false, corrupt = new Set(), hangMove = false, image = jpeg, noQuick = false, asyncList = false } = {}) {
+function harness({ files = new Map(), storage = new Map(), failMove = false, corrupt = new Set(), hangMove = false, image = jpeg, noQuick = false, asyncList = false, full = [1920, 1080], canvas = true } = {}) {
   const requests = [];
   let wait = { status: 204 }, waitHeld = [], next = A, look = null, slowFull = false, fullHeld = [], offline = false, held = [], hold = false, deleted = [], order = [], revoked = [], urlNo = 0, clock = 0;
   const timers = new Map();
@@ -29,10 +29,16 @@ function harness({ files = new Map(), storage = new Map(), failMove = false, cor
       }
     };
   }
+  // Every image decodes at the photo's full size, except a copy the canvas made, which has the canvas's size.
+  const sizes = new Map(), blobSizes = new Map(), drawn = [];
   class Image {
-    naturalWidth = 1920; naturalHeight = 1080;
-    set src(url) { queueMicrotask(() => { if (corrupt.has(url)) this.onerror?.(); else this.onload?.(); }); }
+    set src(url) { [this.naturalWidth, this.naturalHeight] = sizes.get(url) || full; queueMicrotask(() => { if (corrupt.has(url)) this.onerror?.(); else this.onload?.(); }); }
   }
+  const small = new Uint8Array([255,216,1,1,1,1,1,1,1,1,1,255,217]);
+  const document = { hidden: false, createElement: () => ({ width: 0, height: 0,
+    getContext() { const c = this; return { drawImage: (im, x, y, w, h) => drawn.push([im.naturalWidth, im.naturalHeight, w, h, c.width, c.height]) }; },
+    toBlob(done, type, quality) { const b = new Blob([small], { type }); blobSizes.set(b, [this.width, this.height]); queueMicrotask(() => done(b)); } }) };
+  class FileReader { readAsArrayBuffer(b) { b.arrayBuffer().then(buf => { this.result = buf; this.onload(); }); } }
   class XHR {
     open(method, url) { this.url = url; requests.push(url); }
     send() {
@@ -44,7 +50,7 @@ function harness({ files = new Map(), storage = new Map(), failMove = false, cor
           this.status = wait.status; this.responseText = wait.meta ? JSON.stringify(wait.meta) : ''; this.onload(); return;
         }
         this.status = 200;
-        if (/\/current\.json(\?quick=1)?$/.test(this.url)) this.responseText = JSON.stringify(this.url.endsWith('?quick=1') ? meta(next) : { ...meta(next), ...(look ? { look } : {}) }); else this.response = image.buffer;
+        if (/\/current\.json(\?quick=1)?$/.test(this.url)) this.responseText = JSON.stringify(this.url.endsWith('?quick=1') ? meta(next, ...full) : { ...meta(next, ...full), ...(look ? { look } : {}) }); else this.response = image.buffer;
         this.onload();
       };
       if (this.url.includes('/art/wait.json') && wait.held) waitHeld.push(respond);
@@ -53,14 +59,14 @@ function harness({ files = new Map(), storage = new Map(), failMove = false, cor
     abort() { this.onabort?.(); }
   }
   const context = { console, Image, localStorage: { getItem: k => storage.get(k) || null, setItem: (k, v) => { order.push('pointer:' + k); storage.set(k, v); } },
-    document: { hidden: false }, setTimeout: fn => { const id = ++clock; timers.set(id, fn); return id; }, clearTimeout: id => timers.delete(id),
+    document: canvas ? document : { hidden: false }, setTimeout: fn => { const id = ++clock; timers.set(id, fn); return id; }, clearTimeout: id => timers.delete(id),
     tizen: { filesystem: { resolve: (name, ok) => ok({ resolve: () => dir }) } },
-    window: { Uint8Array, Blob, XMLHttpRequest: XHR, tizen: {}, URL: { createObjectURL: () => 'blob:' + (++urlNo), revokeObjectURL: url => revoked.push(url) } }
+    window: { Uint8Array, Blob, FileReader, XMLHttpRequest: XHR, tizen: {}, URL: { createObjectURL: b => { const u = 'blob:' + (++urlNo); if (blobSizes.has(b)) sizes.set(u, blobSizes.get(b)); return u; }, revokeObjectURL: url => revoked.push(url) } }
   };
   vm.runInNewContext(source, context);
   const api = context.window.FrameArt;
   const context2 = context;
-  return { context: context2, waitReply: v => { wait = v; }, releaseWait: () => { waitHeld.splice(0).forEach(fn => fn()); }, api, files, storage, order, deleted, revoked, requests, next: value => { next = value; }, look: value => { look = value; }, slowFull: () => { slowFull = true; }, releaseFull: () => { fullHeld.splice(0).forEach(fn => fn()); }, offline: value => { offline = value; }, hold: () => { hold = true; }, release: () => { hold = false; held.forEach(fn => fn()); held = []; },
+  return { drawn, small, context: context2, waitReply: v => { wait = v; }, releaseWait: () => { waitHeld.splice(0).forEach(fn => fn()); }, api, files, storage, order, deleted, revoked, requests, next: value => { next = value; }, look: value => { look = value; }, slowFull: () => { slowFull = true; }, releaseFull: () => { fullHeld.splice(0).forEach(fn => fn()); }, offline: value => { offline = value; }, hold: () => { hold = true; }, release: () => { hold = false; held.forEach(fn => fn()); held = []; },
     timers, expire: () => { for (const fn of [...timers.values()]) fn(); }, load: () => new Promise(r => api.load(r)), refresh: () => new Promise(r => api.refresh(r)) };
 }
 test('Tizen private cache promotes a completed JPEG before its pointer and survives offline restart', async () => {
@@ -176,4 +182,35 @@ test('a save survives a cancel straight after the photo is handed over (Home ins
   await new Promise(r => h.api.refresh(rec => { h.api.cancel(); r(rec); }));
   for (let i = 0; i < 5; i++) await settle();
   assert.ok(h.files.has(A + '.jpg')); assert.equal(JSON.parse(h.storage.get(META)).revision, A);
+});
+
+test('a 4K Art photo is kept at 1920x1080: shown, saved and remembered at screen size', async () => {
+  const h = harness({ full: [3840, 2160] }); await h.load();
+  const shown = await h.refresh(); await new Promise(r => setImmediate(r));
+  assert.equal(shown.width, 1920); assert.equal(shown.height, 1080);
+  assert.deepEqual(h.drawn, [[3840, 2160, 1920, 1080, 1920, 1080]]);
+  assert.ok(h.revoked.includes('blob:1'), 'the full-size copy is let go');
+  assert.deepEqual([...h.files.get(A + '.jpg')], [...h.small]);
+  const saved = JSON.parse(h.storage.get(META)); assert.equal(saved.width, 1920); assert.equal(saved.height, 1080);
+  const restart = harness({ files: h.files, storage: h.storage }); restart.offline(true); // The saved file decodes at 1920x1080.
+  const again = await restart.load(); assert.equal(again.revision, A); assert.equal(again.width, 1920);
+});
+test('a photo that is not 16:9 still covers the screen, and one already small enough is kept as it is', async () => {
+  const tall = harness({ full: [3000, 3000] }); await tall.load(); await tall.refresh();
+  assert.deepEqual(tall.drawn, [[3000, 3000, 1920, 1920, 1920, 1920]]);
+  const fits = harness({ full: [1920, 1080] }); await fits.load(); await fits.refresh();
+  assert.deepEqual(fits.drawn, []); assert.deepEqual([...fits.files.get(A + '.jpg')], [...jpeg]);
+});
+test('a full-size copy saved by an older build is fetched again and saved at screen size', async () => {
+  const files = new Map([[A + '.jpg', jpeg]]), storage = new Map([[META, JSON.stringify(meta(A, 3840, 2160))]]);
+  const h = harness({ files, storage, full: [3840, 2160] });
+  assert.equal(await h.load(), null);
+  const fresh = await h.refresh(); await new Promise(r => setImmediate(r));
+  assert.equal(fresh.width, 1920); assert.deepEqual([...files.get(A + '.jpg')], [...h.small]);
+  assert.equal(JSON.parse(storage.get(META)).width, 1920);
+});
+test('without a canvas the full-size photo is used and saved as before', async () => {
+  const h = harness({ full: [3840, 2160], canvas: false }); await h.load();
+  const shown = await h.refresh(); await new Promise(r => setImmediate(r));
+  assert.equal(shown.width, 3840); assert.deepEqual([...h.files.get(A + '.jpg')], [...jpeg]);
 });
