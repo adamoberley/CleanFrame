@@ -498,7 +498,7 @@ test('ring does nothing without a dll or a configured stream', async () => {
 
 // A tiny MQTT broker: CONNACK, SUBACK, then whatever each session's script sends.
 async function broker(sessions) {
-  const state = { connections: 0, closed: 0, subscribed: [], sockets: [] };
+  const state = { connections: 0, closed: 0, subscribed: [], filters: [], published: [], sockets: [] };
   const s = net.createServer(socket => {
     const session = sessions[state.connections++] || (() => {});
     state.sockets.push(socket); socket.on('close', () => { state.closed++; }); socket.on('error', () => {});
@@ -507,7 +507,11 @@ async function broker(sessions) {
       buf = Buffer.concat([buf, chunk]); const parsed = shard.mqttPackets(buf); buf = parsed.rest;
       for (const p of parsed.packets) {
         if (p.type === 1) socket.write(Buffer.from([0x20, 2, 0, 0]));
-        else if (p.type === 8) { state.subscribed.push(p.body.subarray(4, 4 + p.body.readUInt16BE(2)).toString()); socket.write(Buffer.from([0x90, 3, 0, 1, 0])); session(socket); }
+        else if (p.type === 8) {
+          state.subscribed.push(p.body.subarray(4, 4 + p.body.readUInt16BE(2)).toString());
+          for (let at = 2; at < p.body.length;) { const n = p.body.readUInt16BE(at); state.filters.push(p.body.subarray(at + 2, at + 2 + n).toString()); at += 3 + n; }
+          socket.write(Buffer.from([0x90, 3, 0, 1, 0])); session(socket);
+        } else if (p.type === 3) state.published.push({ retain: !!(p.flags & 1), ...shard.mqttPublish(p) });
       }
     });
   });
@@ -515,7 +519,7 @@ async function broker(sessions) {
   state.port = s.address().port; state.close = () => { state.sockets.forEach(x => x.destroy()); return new Promise(r => s.close(() => r())); };
   return state;
 }
-const publish = (payload, retain = false) => { const topic = Buffer.from('vetro/cleanframe/doorbell'); return shard.mqttPacket(retain ? 0x31 : 0x30, Buffer.concat([Buffer.from([0, topic.length]), topic, Buffer.from(payload)])); };
+const publish = (payload, retain = false, name = 'vetro/cleanframe/doorbell') => { const topic = Buffer.from(name); return shard.mqttPacket(retain ? 0x31 : 0x30, Buffer.concat([Buffer.from([0, topic.length]), topic, Buffer.from(payload)])); };
 async function until(fn, ms = 2000) { const end = Date.now() + ms; while (!fn()) { if (Date.now() > end) throw Error('timed out waiting'); await sleep(10); } }
 function mqttFile(dir, port) { const file = join(dir, 'vetro-mqtt.json'); writeFileSync(file, JSON.stringify({ enabled: true, host: '127.0.0.1', port })); return file; }
 
@@ -689,4 +693,45 @@ test('Program.cs accepts the same Home app ids as the bridge', () => {
   const cs = readFileSync(new URL('../native/doorbell-pip/Program.cs', import.meta.url), 'utf8');
   const js = readFileSync(new URL('../vetro/cleanframe-art/index.js', import.meta.url), 'utf8');
   assert.equal(/Regex\.IsMatch\(_homeApp, @"([^"]+)"\)/.exec(cs)[1], /\/(\^\[A-Za-z0-9\]\{10\}[^/]+)\/\.test\(app\)/.exec(js)[1]);
+});
+
+test('MQTT remote: Home Assistant buttons are discovered, listed keys are pressed one at a time, everything else is ignored', async () => {
+  const R = 'vetro/cleanframe/remote', key = p => publish(p, false, R);
+  let release; const held = new Promise(r => { release = r; });
+  const b = await broker([socket => { socket.write(Buffer.concat([key('POWER'), key('rm -rf /'), key('power'), publish('HDMI1', true, R), key('ART'), key('7'), key('HDMI2'), key('CH_UP'), key('MENU'), key('TV')])); }]);
+  try {
+    // Remote only (no doorbell stream): MQTT still connects.
+    await withBridge({ start: false, config: { remote: true }, execute: async cmd => { if (cmd.endsWith('XF86PowerOff')) await held; return ok; } }, async ({ bridge, dir, calls }) => {
+      mqttFile(dir, b.port); await bridge.start();
+      await until(() => b.filters.length === 2);
+      assert.deepEqual(b.filters, ['vetro/cleanframe/doorbell', R]);
+      const buttons = b.published.filter(m => m.topic.startsWith('homeassistant/button/'));
+      assert.ok(buttons.length >= 10 && buttons.every(m => m.retain));
+      const power = JSON.parse(buttons.find(m => m.topic === 'homeassistant/button/cleanframe_tv_power/config').payload);
+      assert.equal(power.command_topic, R); assert.equal(power.payload_press, 'POWER'); assert.equal(power.unique_id, 'cleanframe_tv_power');
+      await until(() => calls.length === 1);
+      await sleep(30); assert.equal(calls.length, 1);       // One key at a time: the rest wait for Power.
+      assert.equal(bridge.status().remote.dropped, 2);       // Four may wait; the fifth and sixth were dropped.
+      release();
+      await until(() => bridge.status().remote.pressed === 5);
+      assert.deepEqual(calls, ['/usr/bin/input_keyevent XF86PowerOff', '/usr/bin/input_keyevent XF86ArtMode', '/usr/bin/input_keyevent 7', '/usr/bin/input_keyevent XF86DiscretHDMI2', '/usr/bin/input_keyevent XF86RaiseChannel']);
+      assert.equal(bridge.status().remote.lastKey, 'CH_UP');
+      assert.equal(bridge.status().remote.ignored, 2);   // 'rm -rf /' and lower-case 'power' never ran; the retained HDMI1 was never counted.
+      assert.equal(bridge.status().remote.error, null);
+      assert.equal(bridge.status().remote.listening, true);
+    });
+  } finally { await b.close(); }
+});
+test('MQTT remote is off unless configured: no subscription, no buttons, no presses', async () => {
+  const R = 'vetro/cleanframe/remote';
+  const b = await broker([socket => { socket.write(publish('POWER', false, R)); }]);
+  try {
+    await withBridge({ start: false, config: { pip: { stream: STREAM } } }, async ({ bridge, dir, calls }) => {
+      mqttFile(dir, b.port); await bridge.start();
+      await until(() => b.filters.length === 1); await sleep(50);
+      assert.deepEqual(b.filters, ['vetro/cleanframe/doorbell']);
+      assert.equal(b.published.length, 0); assert.equal(calls.filter(c => c.includes('input_keyevent')).length, 0);
+      assert.deepEqual({ configured: bridge.status().remote.configured, pressed: bridge.status().remote.pressed }, { configured: false, pressed: 0 });
+    });
+  } finally { await b.close(); }
 });

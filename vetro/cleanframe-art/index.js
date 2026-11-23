@@ -150,6 +150,19 @@ function artSettings(timeoutMs) {
    Listens to Home Assistant over MQTT with Vetro's saved broker login, and on a ring starts
    the bundled native overlay (pip/cleanframe-pip.dll) above whatever is playing. */
 var VETRO_MQTT = '/opt/usr/home/owner/share/vetro-mqtt.json', DOORBELL_TOPIC = 'vetro/cleanframe/doorbell';
+/* Remote keys for Home Assistant (private config `remote: true`). Vetro's own MQTT rules can press only a
+   few navigation keys; these are the rest, by name, each mapped to the TV's key name for input_keyevent.
+   Home Assistant gets one MQTT button per name in REMOTE_BUTTONS (discovery); any name can be published. */
+var REMOTE_TOPIC = 'vetro/cleanframe/remote';
+var REMOTE_KEYS = { POWER: 'XF86PowerOff', POWER_ON: 'XF86DiscretPowerOn', POWER_OFF: 'XF86DiscretPowerOff', ART: 'XF86ArtMode',
+  TV: 'XF86DiscretSourceTV', HDMI1: 'XF86DiscretHDMI1', HDMI2: 'XF86DiscretHDMI2', HDMI3: 'XF86DiscretHDMI3', HDMI4: 'XF86DiscretHDMI4',
+  MENU: 'XF86Menu', INFO: 'XF86Info', GUIDE: 'XF86ChannelGuide', CH_LIST: 'XF86ChannelList',
+  CH_UP: 'XF86RaiseChannel', CH_DOWN: 'XF86LowerChannel', PRE_CH: 'XF86PreviousChannel' };
+'0123456789'.split('').forEach(function (d) { REMOTE_KEYS[d] = d; });
+var REMOTE_BUTTONS = [['POWER', 'Power', 'mdi:power'], ['POWER_ON', 'Power on', 'mdi:power-on'], ['POWER_OFF', 'Power off', 'mdi:power-off'],
+  ['ART', 'Art Mode', 'mdi:image-frame'], ['TV', 'TV', 'mdi:television-classic'], ['HDMI1', 'HDMI 1', 'mdi:video-input-hdmi'],
+  ['HDMI2', 'HDMI 2', 'mdi:video-input-hdmi'], ['HDMI3', 'HDMI 3', 'mdi:video-input-hdmi'], ['HDMI4', 'HDMI 4', 'mdi:video-input-hdmi'],
+  ['MENU', 'Menu', 'mdi:menu'], ['CH_UP', 'Channel up', 'mdi:arrow-up-bold'], ['CH_DOWN', 'Channel down', 'mdi:arrow-down-bold']];
 var PIP_DLL = 'cleanframe-pip.dll', PIP_CONFIG = 'cleanframe-pip.runtimeconfig.json', PIP_FILE = /^(?:cleanframe-pip\.(?:dll|runtimeconfig\.json)|res\/(?:frame|mask)\.png)$/;
 var STREAM_RE = /^http:\/\/(?:10(?:\.\d{1,3}){3}|(?:192\.168|172\.(?:1[6-9]|2\d|3[01]))(?:\.\d{1,3}){2}):\d{2,5}\/[A-Za-z0-9\/._?=&%-]{1,200}$/;
 function mqttString(s) { var b = text(s), h = bytes(2); h.writeUInt16BE(b.length, 0); return Buffer.concat([h, b]); }
@@ -221,6 +234,8 @@ function moduleFactory(ctx) {
   var pendingHTTP = 0, address = '127.0.0.1', keyDigest = null, readSettings = ctx.artSettings || artSettings;
   var look = null, lookAt = 0, lookTried = 0, lookRead = null, lookError = null;
   var mq = null, mqTimer = null, mqPing = null, pipHashes = null, pipState = { ringing: 0, lastError: null, installError: null, connected: false };
+  // Remote keys run one at a time; a few more may wait, anything beyond that is dropped.
+  var remoteQueue = [], remoteBusy = false, remoteState = { pressed: 0, dropped: 0, ignored: 0, lastKey: null, lastError: null };
   // Overridable only by the offline test harness; Vetro passes none of these.
   var mqttFile = ctx.vetroMqttPath || VETRO_MQTT, mqttRetry = ctx.mqttRetryMs || 10000, mqttConfigRetry = ctx.mqttConfigRetryMs || 60000;
   var reuseMs = ctx.reuseMs || 1500, lookMaxAge = ctx.lookMaxAgeMs || 3000, lookWait = ctx.lookWaitMs || 800;
@@ -482,6 +497,29 @@ function moduleFactory(ctx) {
       .then(function () { pipState.lastError = null; return true; }, function () { pipState.lastError = 'PiP start failed'; return false; });
   }
   function clearPip() { try { fs.writeFileSync(path.join(pipDir(), 'stop'), ''); } catch (e) { /* Nothing showing. */ } }
+  function remoteOn() { return (ctx.config.get() || {}).remote === true; }
+  function press(name) {
+    if (!Object.prototype.hasOwnProperty.call(REMOTE_KEYS, name)) { remoteState.ignored++; return; }
+    if (remoteQueue.length >= 4) { remoteState.dropped++; return; }
+    remoteQueue.push(name); nextKey();
+  }
+  function nextKey() {
+    var g = generation, name;
+    if (remoteBusy || !remoteQueue.length) return;
+    name = remoteQueue.shift(); remoteBusy = true;
+    // The key name comes from the fixed table above, never from the message.
+    execute('/usr/bin/input_keyevent ' + REMOTE_KEYS[name]).then(function () { remoteState.lastError = null; }, function () { remoteState.lastError = 'Key press failed'; })
+      .then(function () { remoteBusy = false; if (g === generation) { remoteState.pressed++; remoteState.lastKey = name; nextKey(); } else remoteQueue = []; });
+  }
+  // Home Assistant MQTT discovery: one button per REMOTE_BUTTONS entry on a "Frame TV remote" device.
+  function remoteDiscovery(socket) {
+    var device = { identifiers: ['cleanframe_frame_tv_remote'], name: 'Frame TV remote', manufacturer: 'CleanFrame', model: 'Vetro bridge' };
+    REMOTE_BUTTONS.forEach(function (b) {
+      var id = 'cleanframe_tv_' + b[0].toLowerCase(), config = { name: b[1], unique_id: id, object_id: 'frame_tv_' + b[0].toLowerCase(), icon: b[2],
+        command_topic: REMOTE_TOPIC, payload_press: b[0], device: device };
+      socket.write(mqttPacket(0x31, Buffer.concat([mqttString('homeassistant/button/' + id + '/config'), text(JSON.stringify(config))])));
+    });
+  }
   function scheduleMqtt(ms) { if (running && !mqTimer) mqTimer = setTimeout(mqttConnect, ms); }
   function mqttStop() {
     var socket = mq;
@@ -493,7 +531,7 @@ function moduleFactory(ctx) {
     mqTimer = null;
     if (!running || mq) return;
     // Settings may appear later (Vetro's MQTT turned on, pip.stream added): check again while running.
-    if (!pipConfig().stream) { scheduleMqtt(mqttConfigRetry); return; }
+    if (!pipConfig().stream && !remoteOn()) { scheduleMqtt(mqttConfigRetry); return; }
     try { c = JSON.parse(fs.readFileSync(mqttFile, 'utf8')); } catch (e) { pipState.lastError = 'No Vetro MQTT settings'; scheduleMqtt(mqttConfigRetry); return; }
     if (!c || !c.enabled || typeof c.host !== 'string' || !(c.port > 0 && c.port < 65536)) { pipState.lastError = 'Vetro MQTT is off'; scheduleMqtt(mqttConfigRetry); return; }
     function retry() {
@@ -527,10 +565,13 @@ function moduleFactory(ctx) {
           if (p.type === 2) {                       // CONNACK
             if (p.body.length < 2 || p.body[1] !== 0) { pipState.lastError = 'MQTT refused the login'; socket.destroy(); return; }
             pipState.connected = true; pipState.lastError = null;
-            socket.write(mqttPacket(130, Buffer.concat([buffer([0, 1]), mqttString(DOORBELL_TOPIC), buffer([0])])));
+            socket.write(mqttPacket(130, Buffer.concat([buffer([0, 1]), mqttString(DOORBELL_TOPIC), buffer([0])].concat(remoteOn() ? [mqttString(REMOTE_TOPIC), buffer([0])] : []))));
+            if (remoteOn()) remoteDiscovery(socket);
           } else if (p.type === 3) {                // PUBLISH
             m = mqttPublish(p);
-            if (m.topic !== DOORBELL_TOPIC || (p.flags & 1)) return;   // Retained messages are history, not a ring.
+            if (p.flags & 1) return;                    // Retained messages are history, not a ring or a press.
+            if (m.topic === REMOTE_TOPIC) { if (remoteOn()) press(m.payload); return; }
+            if (m.topic !== DOORBELL_TOPIC || !pipConfig().stream) return;
             if (m.payload === 'ring') ring(); else if (m.payload === 'clear') clearPip();
           }
         });
@@ -615,14 +656,14 @@ function moduleFactory(ctx) {
   function stop() {
     waiters.slice().forEach(function (w) { endWaiter(w, null); }); prefStamp = null; watchFailedAt = 0;
     running = false; generation++; current = null; revisions = []; lastRead = 0; lastError = false; lookError = null; look = null; lookAt = 0; lookTried = 0; lookRead = null; lightsBusy = false;
-    mqttStop(); homeStop();
+    mqttStop(); homeStop(); remoteQueue = [];
     var old = server; server = null; starting = null;
     if (rejectStart) { rejectStart(new Error('Bridge stopped')); rejectStart = null; }
     sockets.slice().forEach(function (socket) { socket.destroy(); });
     return new Promise(function (resolve) { if (old) old.close(resolve); else resolve(); });
   }
   return { start: start, stop: stop,
-    status: function () { return { running: running, keyed: !!keyDigest, available: !!current, refreshing: !!inflight, error: lastError ? 'Art unavailable' : null, look: look, lookError: lookError, doorbell: { listening: pipState.connected, configured: !!pipConfig().stream, error: pipState.installError || pipState.lastError }, home: { configured: !!homeConfig(), running: homeState.running, error: homeState.error }, watch: { waiting: waiters.length, lastWaitAt: lastWaitAt || null } }; },
+    status: function () { return { running: running, keyed: !!keyDigest, available: !!current, refreshing: !!inflight, error: lastError ? 'Art unavailable' : null, look: look, lookError: lookError, doorbell: { listening: pipState.connected, configured: !!pipConfig().stream, error: pipState.installError || pipState.lastError }, home: { configured: !!homeConfig(), running: homeState.running, error: homeState.error }, remote: { configured: remoteOn(), listening: remoteOn() && pipState.connected, pressed: remoteState.pressed, dropped: remoteState.dropped, ignored: remoteState.ignored, lastKey: remoteState.lastKey, error: remoteState.lastError }, watch: { waiting: waiters.length, lastWaitAt: lastWaitAt || null } }; },
     route: function (req, res) { res.writeHead(404); res.end(); },
     // Offline harness hooks; Vetro never calls these.
     _test: { unpackPip: unpackPip, ring: ring, homeStart: homeStart, homeRetrying: function () { return !!homeTimer; }, waiting: function () { return { waiters: waiters.length, watching: !!watchTimer }; }, pipDir: pipDir, pipHashes: function () { return pipHashes; }, mqttTimers: function () { return { retry: !!mqTimer, ping: !!mqPing, socket: !!mq }; } }
