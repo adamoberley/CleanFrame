@@ -2,7 +2,7 @@
    Its only repeated request is watch(): one long wait at a time, and only while Home is hidden. */
 (function () {
   'use strict';
-  var MAX = 12 * 1024 * 1024, PORT_KEY = 'cleanframe.art.port', META_KEY = 'cleanframe.art.cache.v1', LOOK_KEY = 'cleanframe.art.look.v1', PREVIEW_KEY = 'cleanframe.art.preview.v2';
+  var MAX = 12 * 1024 * 1024, SCREEN_W = 1920, SCREEN_H = 1080, PORT_KEY = 'cleanframe.art.port', META_KEY = 'cleanframe.art.cache.v1', LOOK_KEY = 'cleanframe.art.look.v1', PREVIEW_KEY = 'cleanframe.art.preview.v2';
   // Owner-calibrated against Art Mode on a 2024 Frame (brightness 5) by matching
   // filmed side-by-sides. Colour temperature −5..+5 blends between the two ends.
   var COOL = { brightness: 0.41, contrast: 0.86, saturate: 0.50, tint: [246, 238, 222], gamma: [1, 1.02, 1.15] };
@@ -101,9 +101,10 @@
     urls = urls.filter(function (item) { if (item === retainedURL || current && item === current.url) return true; window.URL.revokeObjectURL(item); return false; });
     var url = window.URL.createObjectURL(blob); urls.push(url); return url;
   }
+  // done(ok, image): the decoded image comes back so a new photo can be shrunk without decoding it twice.
   function validImage(m, url, done) {
     var im = new Image(), finished = false, timer = setTimeout(function () { finish(false); }, 8000);
-    function finish(ok) { if (finished) return; finished = true; clearTimeout(timer); im.onload = im.onerror = null; done(ok); }
+    function finish(ok) { if (finished) return; finished = true; clearTimeout(timer); im.onload = im.onerror = null; done(ok, ok ? im : null); }
     im.onload = function () { finish(im.naturalWidth === m.width && im.naturalHeight === m.height); };
     im.onerror = function () { finish(false); }; im.src = url;
   }
@@ -143,7 +144,8 @@
         var m, f;
         try {
           m = JSON.parse(localStorage.getItem(META_KEY));
-          if (!metadata(m)) { finish(null); return; }
+          // A full-size copy saved by an older build is fetched and saved again at screen size.
+          if (!metadata(m) || oversize(m)) { finish(null); return; }
           f = dir.resolve(m.revision + '.jpg');
           if (!f.isFile || f.fileSize < 12 || f.fileSize > MAX) { finish(null); return; }
           validImage(m, f.toURI(), function (ok) { finish(ok ? record(m, f.toURI()) : null); });
@@ -154,7 +156,7 @@
           var req = store.transaction('cache').objectStore('cache').get('last');
           req.onsuccess = function () {
             var r = req.result, url;
-            if (!r || !metadata(r.meta) || !r.blob || r.blob.size > MAX) { finish(null); return; }
+            if (!r || !metadata(r.meta) || oversize(r.meta) || !r.blob || r.blob.size > MAX) { finish(null); return; }
             try { url = objectURL(r.blob); validImage(r.meta, url, function (ok) { finish(ok ? record(r.meta, url) : null); }); }
             catch (e) { finish(null); }
           };
@@ -298,13 +300,48 @@
       if (data[0] !== 255 || data[1] !== 216 || data[data.length - 2] !== 255 || data[data.length - 1] !== 217) { done(null); return; }
       try { blob = new window.Blob([bytes], { type: 'image/jpeg' }); url = objectURL(blob); }
       catch (e) { done(null); return; }
-      validImage(m, url, function (ok) {
+      validImage(m, url, function (ok, im) {
         if (g !== epoch) return;
         if (!ok) { done(null); return; }
-        persist(m, bytes, blob, url, g, function () {});
-        done(record(m, url));
+        shrink(m, im, bytes, blob, url, function (sm, sbytes, sblob, surl) {
+          if (g !== epoch) return;
+          persist(sm, sbytes, sblob, surl, g, function () {});
+          done(record(sm, surl));
+        });
       });
     });
+  }
+  // Home draws at 1920x1080, so a larger photo (Art Mode keeps 4K) is kept only at the size that still
+  // covers the screen: a 4K photo decoded is about 33 MB of memory, at 1920x1080 about 8 MB.
+  // Done once per new photo; if the browser cannot re-encode it, the original is kept.
+  function oversize(m) { return Math.max(SCREEN_W / m.width, SCREEN_H / m.height) < 1; }
+  function shrink(m, im, bytes, blob, url, done) {
+    if (!oversize(m)) { done(m, bytes, blob, url); return; }
+    var ended = false, timer = setTimeout(function () { finish(null); }, 10000), scale = Math.max(SCREEN_W / m.width, SCREEN_H / m.height);
+    var w = Math.max(1, Math.round(m.width * scale)), h = Math.max(1, Math.round(m.height * scale)), c, ctx;
+    function finish(small, smallBytes) {
+      if (ended) return; ended = true; clearTimeout(timer);
+      if (!small || !smallBytes) { done(m, bytes, blob, url); return; }
+      var sm = {}, k, surl;
+      for (k in m) if (Object.prototype.hasOwnProperty.call(m, k)) sm[k] = m[k];
+      sm.width = w; sm.height = h;
+      try { surl = objectURL(small); } catch (e) { done(m, bytes, blob, url); return; }
+      // The full-size copy is no longer needed.
+      urls = urls.filter(function (item) { if (item !== url) return true; window.URL.revokeObjectURL(item); return false; });
+      done(sm, smallBytes, small, surl);
+    }
+    try {
+      c = document.createElement('canvas'); c.width = w; c.height = h; ctx = c.getContext('2d');
+      ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(im, 0, 0, w, h);
+      c.toBlob(function (small) {
+        if (!small || small.size < 12 || small.size > MAX) { finish(null); return; }
+        var reader = new window.FileReader();
+        reader.onload = function () { finish(small, reader.result); };
+        reader.onerror = function () { finish(null); };
+        reader.readAsArrayBuffer(small);
+      }, 'image/jpeg', 0.92);
+    } catch (e) { finish(null); }
   }
   // While Home is hidden: one long request the bridge answers when the Art photo is no longer <since>
   // (or empty after 50 s). The new photo is downloaded and saved then, so Home shows it at once.
